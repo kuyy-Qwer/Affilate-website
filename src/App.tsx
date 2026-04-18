@@ -23,7 +23,9 @@ import {
   X,
   CreditCard as CreditIcon,
   Eye,
-  Heart
+  Heart,
+  Ticket,
+  Wallet
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -38,42 +40,60 @@ import {
 } from 'recharts';
 import { Joyride, Step } from 'react-joyride';
 import { auth, db } from './lib/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
-import { Product, AffiliateStats, User, Sale } from './types';
+import { signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where, addDoc, updateDoc } from 'firebase/firestore';
+import { Product, AffiliateStats, User, Sale, Coupon } from './types';
 import Navbar from './components/Navbar';
 import { LoginForm, RegisterForm } from './components/AuthForms';
 import AdminDashboard from './components/AdminDashboard';
+import { useStore } from './store/useStore';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'products' | 'affiliate' | 'login' | 'register' | 'admin' | 'features' | 'pricing' | 'about' | 'wishlist'>('home');
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
+  const { 
+    user, 
+    setUser, 
+    isAuthLoading, 
+    products, 
+    activeTab, 
+    setActiveTab, 
+    initAuth, 
+    fetchProducts 
+  } = useStore();
+
   const [runTour, setRunTour] = useState(false);
+  const [purchaseModal, setPurchaseModal] = useState<{ isOpen: boolean, product: Product | null }>({ isOpen: false, product: null });
+  const [couponCode, setCouponCode] = useState('');
+  const [isBuying, setIsBuying] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+
+  const applyCoupon = async () => {
+    if (!couponCode) return;
+    try {
+      const q = query(collection(db, 'coupons'), where('code', '==', couponCode.toUpperCase()), where('isActive', '==', true));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        alert('Kupon tidak valid atau sudah tidak aktif.');
+        return;
+      }
+      const couponData = { id: snap.docs[0].id, ...snap.docs[0].data() } as any as Coupon;
+      setAppliedCoupon(couponData);
+      alert('Kupon berhasil diterapkan!');
+    } catch (err) {
+      alert('Gagal memverifikasi kupon');
+    }
+  };
+
+  const calculateTotal = (price: number) => {
+    if (!appliedCoupon) return price;
+    if (appliedCoupon.discountType === 'percentage') {
+      return price - (price * (appliedCoupon.discountValue / 100));
+    }
+    return Math.max(0, price - appliedCoupon.discountValue);
+  };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        const docRef = doc(db, 'users', fbUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setUser(docSnap.data() as User);
-        }
-      } else {
-        setUser(null);
-      }
-      setIsAuthLoading(false);
-    });
-
-    const fetchProducts = async () => {
-       const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
-       const snap = await getDocs(q);
-       setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
-    };
+    initAuth();
     fetchProducts();
-
-    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -108,39 +128,52 @@ export default function App() {
     setActiveTab('home');
   };
 
-  const handlePurchase = async (product: Product) => {
-    if (!user) {
-      setActiveTab('login');
-      return;
-    }
-
-    const referralCode = localStorage.getItem('affiliate_ref');
-    const confirmBuy = confirm(`Beli ${product.name} seharga Rp ${product.price.toLocaleString('id-ID')}?`);
+  const handlePurchase = async () => {
+    if (!user || !purchaseModal.product) return;
     
-    if (!confirmBuy) return;
+    setIsBuying(true);
+    const product = purchaseModal.product;
+    const finalPrice = calculateTotal(product.price);
+    const referralCode = localStorage.getItem('affiliate_ref');
+    const { getAuthHeaders } = useStore.getState();
 
     try {
       const response = await fetch('/api/purchase', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
           productId: product.id,
           buyerId: user.id,
           buyerEmail: user.email,
-          referralCode: referralCode
+          referralCode: referralCode,
+          couponId: appliedCoupon?.id || null,
+          amount: finalPrice
         })
       });
 
       const resData = await response.json();
       if (resData.success) {
+        // Increment coupon usage if used
+        if (appliedCoupon) {
+          await updateDoc(doc(db, 'coupons', appliedCoupon.id), {
+            usageCount: (appliedCoupon.usageCount || 0) + 1
+          });
+        }
         alert('Pembelian berhasil! Akses produk telah dibuka di dashboard Anda.');
-        // Refresh stats if we are on affiliate page
+        setPurchaseModal({ isOpen: false, product: null });
+        setAppliedCoupon(null);
+        setCouponCode('');
+        // Refresh products and user data to reflect new purchase
+        const docSnap = await getDoc(doc(db, 'users', user.id));
+        if (docSnap.exists()) setUser(docSnap.data() as User);
         if (activeTab === 'affiliate') window.location.reload();
       } else {
         alert('Gagal membeli: ' + resData.error);
       }
     } catch (err: any) {
       alert('Error transaksi: ' + err.message);
+    } finally {
+      setIsBuying(false);
     }
   };
 
@@ -235,9 +268,9 @@ export default function App() {
       case 'home':
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
       case 'products':
-        return <ProductCatalog products={products} onPurchase={handlePurchase} user={user} onToggleWishlist={updateWishlist} />;
+        return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} user={user} onToggleWishlist={updateWishlist} />;
       case 'wishlist':
-        return user ? <WishlistView products={products} user={user} onPurchase={handlePurchase} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
+        return user ? <WishlistView products={products} user={user} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'pricing':
         return <PricingView />;
       case 'affiliate':
@@ -304,6 +337,91 @@ export default function App() {
         } as any)}
       />
       <Navbar user={user} onNavigate={setActiveTab} activeTab={activeTab} />
+
+      <AnimatePresence>
+        {purchaseModal.isOpen && purchaseModal.product && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+            <motion.div 
+               initial={{ opacity: 0, scale: 0.9 }}
+               animate={{ opacity: 1, scale: 1 }}
+               exit={{ opacity: 0, scale: 0.9 }}
+               className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative shadow-2xl"
+            >
+               <button onClick={() => { setPurchaseModal({ isOpen: false, product: null }); setAppliedCoupon(null); setCouponCode(''); }} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                 <X size={24} />
+               </button>
+               
+               <div className="space-y-2">
+                 <h3 className="text-3xl font-black tracking-tight">Checkout</h3>
+                 <p className="text-gray-500 font-medium">Selesaikan transaksi untuk mengakses produk ini.</p>
+               </div>
+
+               <div className="flex gap-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                  <img src={purchaseModal.product.image} className="w-20 h-20 rounded-2xl object-cover shadow-sm" referrerPolicy="no-referrer" />
+                  <div className="flex-1 space-y-1">
+                    <p className="font-black text-gray-900 line-clamp-1">{purchaseModal.product.name}</p>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{purchaseModal.product.category}</p>
+                    <p className="text-lg font-black text-indigo-600">Rp {purchaseModal.product.price.toLocaleString('id-ID')}</p>
+                  </div>
+               </div>
+
+               <div className="space-y-4">
+                  <div className="flex gap-2">
+                    <input 
+                      value={couponCode}
+                      onChange={e => setCouponCode(e.target.value.toUpperCase())}
+                      placeholder="Punya Kode Kupon?"
+                      className="flex-1 px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm"
+                    />
+                    <button 
+                      onClick={applyCoupon}
+                      className="px-6 py-4 bg-gray-900 text-white rounded-2xl font-bold text-sm hover:bg-gray-800 transition-all"
+                    >Terapkan</button>
+                  </div>
+                  {appliedCoupon && (
+                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center bg-green-50 px-4 py-2 rounded-xl text-green-700 text-xs font-bold">
+                       <div className="flex items-center gap-2">
+                         <Ticket size={14} />
+                         Kupon "{appliedCoupon.code}" Berhasil!
+                       </div>
+                       <span>-{appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}%` : `Rp ${appliedCoupon.discountValue.toLocaleString('id-ID')}`}</span>
+                    </motion.div>
+                  )}
+               </div>
+
+               <div className="pt-6 border-t border-gray-100 space-y-4">
+                  <div className="flex justify-between items-center text-sm font-bold text-gray-500">
+                    <span>Subtotal</span>
+                    <span>Rp {purchaseModal.product.price.toLocaleString('id-ID')}</span>
+                  </div>
+                  {appliedCoupon && (
+                     <div className="flex justify-between items-center text-sm font-bold text-green-600">
+                        <span>Diskon Kupon</span>
+                        <span>- Rp {(purchaseModal.product.price - calculateTotal(purchaseModal.product.price)).toLocaleString('id-ID')}</span>
+                     </div>
+                  )}
+                  <div className="flex justify-between items-center text-xl font-black text-gray-900">
+                    <span>Total Bayar</span>
+                    <span className="text-indigo-600">Rp {calculateTotal(purchaseModal.product.price).toLocaleString('id-ID')}</span>
+                  </div>
+               </div>
+
+               <button 
+                 onClick={handlePurchase}
+                 disabled={isBuying}
+                 className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+               >
+                 {isBuying ? <Zap className="animate-spin" size={24} /> : (
+                   <>
+                     <CreditIcon size={24} />
+                     Bayar & Akses Sekarang
+                   </>
+                 )}
+               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <AnimatePresence mode="wait">
@@ -589,10 +707,52 @@ function AffiliateDashboard({ data, user, onLogout }: { data: AffiliateStats, us
   const [topProducts, setTopProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // Withdrawal States
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentDetails, setPaymentDetails] = useState('');
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+
   // Filter States
   const [dateFilter, setDateFilter] = useState<'all' | '7days' | 'month' | 'custom'>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
+
+  const handleWithdrawRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (withdrawAmount < 50000) {
+      alert('Minimal penarikan adalah Rp 50.000');
+      return;
+    }
+    if (withdrawAmount > (user.commissionEarned || 0)) {
+      alert('Saldo komisi tidak mencukupi');
+      return;
+    }
+
+    setIsWithdrawing(true);
+    try {
+      await addDoc(collection(db, 'withdrawals'), {
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        amount: withdrawAmount,
+        status: 'pending',
+        paymentMethod,
+        paymentDetails,
+        createdAt: new Date().toISOString()
+      });
+      alert('Permintaan pencairan berhasil dikirim. Mohon tunggu proses verifikasi admin.');
+      setIsWithdrawModalOpen(false);
+      setWithdrawAmount(0);
+      setPaymentMethod('');
+      setPaymentDetails('');
+    } catch (err) {
+      alert('Gagal mengirim permintaan');
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
 
   useEffect(() => {
     const fetchSales = async () => {
@@ -696,10 +856,100 @@ function AffiliateDashboard({ data, user, onLogout }: { data: AffiliateStats, us
        </div>
 
        <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(user.commissionEarned || 0)} icon={<BarChart3 />} trend="+15%" />
-          <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString()} icon={<ShoppingBag />} trend="+5" />
-          <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
-       </div>
+           <div className="relative group">
+              <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(user.commissionEarned || 0)} icon={<BarChart3 />} trend="+15%" />
+              <button 
+                onClick={() => setIsWithdrawModalOpen(true)}
+                className="absolute right-4 bottom-4 bg-indigo-600 text-white p-2 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
+              >
+                Cairkan Dana
+              </button>
+           </div>
+           <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString()} icon={<ShoppingBag />} trend="+5" />
+           <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
+        </div>
+
+        {/* Withdrawal Modal */}
+        <AnimatePresence>
+          {isWithdrawModalOpen && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative overflow-hidden"
+              >
+                  <button onClick={() => setIsWithdrawModalOpen(false)} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                    <X size={24} />
+                  </button>
+                  <div className="space-y-2">
+                    <h3 className="text-3xl font-bold tracking-tight">Cairkan Komisi</h3>
+                    <p className="text-gray-500 font-medium">Lengkapi detail untuk memproses pencairan dana Anda.</p>
+                  </div>
+
+                  <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100/50 flex justify-between items-center">
+                    <div>
+                       <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Saldo Tersedia</p>
+                       <p className="text-2xl font-black text-indigo-600">Rp {(user.commissionEarned || 0).toLocaleString('id-ID')}</p>
+                    </div>
+                    <Wallet className="text-indigo-200" size={40} />
+                  </div>
+
+                  <form onSubmit={handleWithdrawRequest} className="space-y-6">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase px-2">Nominal Pencairan</label>
+                      <input 
+                        required
+                        type="number"
+                        min="50000"
+                        max={user.commissionEarned}
+                        value={withdrawAmount}
+                        onChange={e => setWithdrawAmount(parseInt(e.target.value))}
+                        className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 text-lg font-bold"
+                        placeholder="Min. 50,000"
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase px-2">Metode Pembayaran</label>
+                        <select 
+                          required
+                          value={paymentMethod}
+                          onChange={e => setPaymentMethod(e.target.value)}
+                          className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                        >
+                          <option value="">Pilih Metode</option>
+                          <option value="Bank Transfer">Transfer Bank</option>
+                          <option value="DANA">DANA</option>
+                          <option value="OVO">OVO</option>
+                          <option value="GoPay">GoPay</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase px-2">Detail Rekening/E-Wallet</label>
+                        <textarea 
+                          required
+                          value={paymentDetails}
+                          onChange={e => setPaymentDetails(e.target.value)}
+                          className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 h-24 text-sm font-medium"
+                          placeholder="Contoh: BCA 1234567890 a/n Nama Lengkap"
+                        />
+                      </div>
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      disabled={isWithdrawing}
+                      className="w-full py-4 bg-gray-900 text-white rounded-2xl font-bold text-lg hover:bg-indigo-600 transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                    >
+                      {isWithdrawing ? <Zap className="animate-spin" size={20} /> : 'Kirim Permintaan'}
+                    </button>
+                  </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
        <div id="commission-chart" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
           <div className="flex justify-between items-center px-2">

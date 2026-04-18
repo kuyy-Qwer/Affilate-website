@@ -40,6 +40,29 @@ export interface User {
   totalClicks?: number;
 }
 
+export interface Coupon {
+  id: string;
+  code: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  isActive: boolean;
+  usageCount: number;
+  createdAt: string;
+}
+
+export interface WithdrawalRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  paymentMethod: string;
+  paymentDetails: string;
+  createdAt: string;
+  processedAt?: string;
+}
+
 export interface Sale {
   id: string;
   productId: string;

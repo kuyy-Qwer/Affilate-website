@@ -1,8 +1,9 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import admin from 'firebase-admin';
 import firebaseConfig from './firebase-applet-config.json';
+import { z } from 'zod';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -14,6 +15,71 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+// --- Security Middleware ---
+
+// Extend Express Request to include user info
+interface AuthenticatedRequest extends Request {
+  user?: admin.auth.DecodedIdToken;
+  userProfile?: any;
+}
+
+const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.user = decodedToken;
+    
+    // Fetch user profile to check roles
+    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+    if (userDoc.exists) {
+      req.userProfile = userDoc.data();
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Auth Error:', error);
+    res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  }
+};
+
+const requireAdmin = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.userProfile?.role !== 'admin') {
+    return res.status(403).json({ error: 'Forbidden: Admin access required' });
+  }
+  next();
+};
+
+// --- Input Validation Schemas ---
+
+const purchaseSchema = z.object({
+  productId: z.string().min(1),
+  buyerId: z.string().min(1),
+  buyerEmail: z.string().email(),
+  referralCode: z.string().nullable().optional(),
+  couponId: z.string().nullable().optional(),
+  amount: z.number().positive()
+});
+
+const clickSchema = z.object({
+  referralCode: z.string().min(1)
+});
+
+const updateRoleSchema = z.object({
+  userId: z.string().min(1),
+  newRole: z.enum(['admin', 'affiliate', 'customer'])
+});
+
+const updateUserSchema = z.object({
+  userId: z.string().min(1),
+  name: z.string().min(1),
+  email: z.string().email()
+});
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -21,11 +87,11 @@ async function startServer() {
   app.use(express.json());
 
   // API Route: Handle Purchase & Commission Allocation
-  app.post('/api/purchase', async (req, res) => {
-    const { productId, buyerId, buyerEmail, referralCode } = req.body;
-
+  app.post('/api/purchase', authenticate, async (req: AuthenticatedRequest, res) => {
     try {
-      // Use standard firestore for simplicity unless specifically a named db is needed
+      const validatedData = purchaseSchema.parse(req.body);
+      const { productId, buyerId, buyerEmail, referralCode } = validatedData;
+      
       const fs = admin.firestore();
       
       // 1. Get Product Details
@@ -47,7 +113,7 @@ async function startServer() {
         if (!affiliateQuery.empty) {
           const affiliateDoc = affiliateQuery.docs[0];
           affiliateId = affiliateDoc.id;
-          commission = Math.floor(product?.price * commissionRate);
+          commission = Math.floor((product?.price || 0) * commissionRate);
         }
       }
 
@@ -78,16 +144,18 @@ async function startServer() {
       res.json({ success: true, saleId: saleRef.id, commissionAllocated: commission });
 
     } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation failed', details: err.issues });
+      }
       console.error('Purchase Error:', err);
       res.status(500).json({ error: err.message });
     }
   });
 
-  // API Route: Track Referral Click
+  // API Route: Track Referral Click (Non-authenticated but validated)
   app.post('/api/click', async (req, res) => {
-    const { referralCode } = req.body;
     try {
-      if (!referralCode) return res.status(400).json({ error: 'Referral code missing' });
+      const { referralCode } = clickSchema.parse(req.body);
       const fs = admin.firestore();
       const userQuery = await fs.collection('users').where('referralCode', '==', referralCode).limit(1).get();
       
@@ -100,26 +168,29 @@ async function startServer() {
       }
       res.status(404).json({ error: 'Affiliate not found' });
     } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation failed', details: err.issues });
+      }
       res.status(500).json({ error: err.message });
     }
   });
 
-  // API Route: Fetch All Users (Admin only logic)
-  app.get('/api/admin/users', async (req, res) => {
+  // API Route: Fetch All Users (Admin only)
+  app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
     try {
       const fs = admin.firestore();
       const usersSnap = await fs.collection('users').orderBy('createdAt', 'desc').get();
-      const users = usersSnap.docs.map(doc => doc.data());
+      const users = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       res.json(users);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // API Route: Update User Role
-  app.post('/api/admin/update-role', async (req, res) => {
-    const { userId, newRole } = req.body;
+  // API Route: Update User Role (Admin only)
+  app.post('/api/admin/update-role', authenticate, requireAdmin, async (req, res) => {
     try {
+      const { userId, newRole } = updateRoleSchema.parse(req.body);
       const fs = admin.firestore();
       await fs.collection('users').doc(userId).update({
         role: newRole,
@@ -127,14 +198,17 @@ async function startServer() {
       });
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation failed', details: err.issues });
+      }
       res.status(500).json({ error: err.message });
     }
   });
 
-  // API Route: Update User Details
-  app.post('/api/admin/update-user', async (req, res) => {
-    const { userId, name, email } = req.body;
+  // API Route: Update User Details (Admin only)
+  app.post('/api/admin/update-user', authenticate, requireAdmin, async (req, res) => {
     try {
+      const { userId, name, email } = updateUserSchema.parse(req.body);
       const fs = admin.firestore();
       await fs.collection('users').doc(userId).update({
         name,
@@ -143,6 +217,9 @@ async function startServer() {
       });
       res.json({ success: true });
     } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation failed', details: err.issues });
+      }
       res.status(500).json({ error: err.message });
     }
   });
