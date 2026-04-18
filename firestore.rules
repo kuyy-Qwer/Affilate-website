@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isEmailVerified() { return request.auth.token.email_verified == true; }
+    function getUserData() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return isSignedIn() && getUserData().role == 'admin'; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // --- Entity Validations ---
+    function isValidUser(data) {
+      return data.id == request.auth.uid
+        && data.email == request.auth.token.email
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.role in ['admin', 'affiliate', 'customer'];
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.price is number && data.price >= 0
+        && data.description is string && data.description.size() <= 2000;
+    }
+
+    function isValidSale(data) {
+      return data.productId is string
+        && data.buyerId == request.auth.uid
+        && data.amount is number && data.amount >= 0;
+    }
+
+    // --- Collections ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidUser(incoming()) && (incoming().role == 'customer' || incoming().role == 'affiliate');
+      allow update: if isOwner(userId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'referralCode'])
+      ) || isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidProduct(incoming());
+    }
+
+    match /sales/{saleId} {
+      allow get: if isSignedIn() && (existing().buyerId == request.auth.uid || existing().affiliateId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.buyerId == request.auth.uid || resource.data.affiliateId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidSale(incoming());
+      allow update, delete: if isAdmin();
+    }
+  }
+}

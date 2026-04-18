@@ -1,0 +1,1121 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  ShoppingBag, 
+  Users, 
+  BarChart3, 
+  LayoutDashboard, 
+  LogOut, 
+  ChevronRight, 
+  Star, 
+  TrendingUp,
+  CreditCard,
+  ShieldCheck,
+  Zap,
+  BookOpen,
+  ArrowRight,
+  Check,
+  X,
+  CreditCard as CreditIcon,
+  Eye,
+  Heart
+} from 'lucide-react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area 
+} from 'recharts';
+import { Joyride, Step } from 'react-joyride';
+import { auth, db } from './lib/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
+import { Product, AffiliateStats, User, Sale } from './types';
+import Navbar from './components/Navbar';
+import { LoginForm, RegisterForm } from './components/AuthForms';
+import AdminDashboard from './components/AdminDashboard';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'home' | 'products' | 'affiliate' | 'login' | 'register' | 'admin' | 'features' | 'pricing' | 'about' | 'wishlist'>('home');
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [runTour, setRunTour] = useState(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const docRef = doc(db, 'users', fbUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setUser(docSnap.data() as User);
+        }
+      } else {
+        setUser(null);
+      }
+      setIsAuthLoading(false);
+    });
+
+    const fetchProducts = async () => {
+       const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+       const snap = await getDocs(q);
+       setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+    };
+    fetchProducts();
+
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    
+    if (ref) {
+      localStorage.setItem('affiliate_ref', ref);
+      
+      // Track click only once per session/tab
+      const trackClick = async () => {
+        const SessionKey = `tracked_${ref}`;
+        if (!sessionStorage.getItem(SessionKey)) {
+          try {
+            await fetch('/api/click', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ referralCode: ref })
+            });
+            sessionStorage.setItem(SessionKey, 'true');
+          } catch (e) {
+            console.error('Click tracking failed', e);
+          }
+        }
+      };
+      trackClick();
+    }
+  }, []);
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setActiveTab('home');
+  };
+
+  const handlePurchase = async (product: Product) => {
+    if (!user) {
+      setActiveTab('login');
+      return;
+    }
+
+    const referralCode = localStorage.getItem('affiliate_ref');
+    const confirmBuy = confirm(`Beli ${product.name} seharga Rp ${product.price.toLocaleString('id-ID')}?`);
+    
+    if (!confirmBuy) return;
+
+    try {
+      const response = await fetch('/api/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: product.id,
+          buyerId: user.id,
+          buyerEmail: user.email,
+          referralCode: referralCode
+        })
+      });
+
+      const resData = await response.json();
+      if (resData.success) {
+        alert('Pembelian berhasil! Akses produk telah dibuka di dashboard Anda.');
+        // Refresh stats if we are on affiliate page
+        if (activeTab === 'affiliate') window.location.reload();
+      } else {
+        alert('Gagal membeli: ' + resData.error);
+      }
+    } catch (err: any) {
+      alert('Error transaksi: ' + err.message);
+    }
+  };
+
+  useEffect(() => {
+    const hasSeenTour = localStorage.getItem('digisell_tour_seen');
+    if (!hasSeenTour && !isAuthLoading && products.length > 0) {
+      const timer = setTimeout(() => {
+        setRunTour(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthLoading, products]);
+
+  const tourSteps: Step[] = [
+    {
+      target: 'body',
+      content: 'Selamat datang di DigiSell! Mari berkeliling sejenak untuk melihat fitur-fitur utama kami.',
+      placement: 'center' as const,
+    },
+    {
+      target: '#nav-products',
+      content: 'Jelajahi katalog produk digital premium kami di sini.',
+    },
+    {
+      target: '#nav-features',
+      content: 'Pelajari berbagai kemudahan dan fitur unggulan yang kami sediakan.',
+    },
+    {
+      target: '#nav-pricing',
+      content: 'Cek daftar paket kemitraan kami, mulai dari gratis hingga profesional.',
+    },
+    {
+      target: user ? '#nav-dashboard' : '#nav-register',
+      content: user 
+        ? 'Akses dashboard Anda untuk mengelola profil, melihat statistik, dan link referal.'
+        : 'Daftar sekarang untuk bergabung dalam program afiliasi dengan komisi menggiurkan!',
+    },
+    {
+      target: '#product-catalog',
+      content: 'Lihat koleksi produk digital terbaru kami.',
+      placement: 'top' as const,
+    }
+  ];
+
+  if (activeTab === 'affiliate' && user) {
+    tourSteps.push(
+      {
+        target: '#affiliate-stats',
+        content: 'Pantau total komisi, jumlah penjualan, dan klik link Anda secara real-time.',
+      },
+      {
+        target: '#commission-chart',
+        content: 'Lihat visualisasi tren pendapatan Anda dalam 7 hari terakhir.',
+      },
+      {
+        target: '#referral-link',
+        content: 'Salin link unik ini dan sebarkan untuk mulai menghasilkan komisi!',
+      }
+    );
+  }
+
+  const handleTourCallback = (tourData: any) => {
+    const { status } = tourData;
+    if (status === 'finished' || status === 'skipped') {
+      setRunTour(false);
+      localStorage.setItem('digisell_tour_seen', 'true');
+    }
+  };
+
+  const updateWishlist = async (productId: string) => {
+    if (!user) return;
+    const isWishlisted = user.wishlist?.includes(productId);
+    const newWishlist = isWishlisted 
+      ? user.wishlist?.filter(id => id !== productId) || []
+      : [...(user.wishlist || []), productId];
+    
+    // Optimistic update
+    const updatedUser = { ...user, wishlist: newWishlist };
+    setUser(updatedUser);
+
+    try {
+      await setDoc(doc(db, 'users', user.id), { wishlist: newWishlist }, { merge: true });
+    } catch (err) {
+      console.error("Failed to update wishlist:", err);
+      // Revert if failed
+      setUser(user);
+    }
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'home':
+        return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
+      case 'products':
+        return <ProductCatalog products={products} onPurchase={handlePurchase} user={user} onToggleWishlist={updateWishlist} />;
+      case 'wishlist':
+        return user ? <WishlistView products={products} user={user} onPurchase={handlePurchase} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
+      case 'pricing':
+        return <PricingView />;
+      case 'affiliate':
+        return user ? <AffiliateDashboard 
+          user={user}
+          data={{
+            totalClicks: user.totalClicks || 0,
+            totalSales: user.totalSales || 0,
+            totalCommission: user.commissionEarned || 0,
+            referralLink: `https://${window.location.host}/?ref=${user.referralCode}`
+          }} 
+          onLogout={handleLogout} 
+        /> : <AuthWrapper type="login" setTab={setActiveTab} />;
+      case 'admin':
+        return user?.role === 'admin' ? <div className="space-y-8">
+          <div className="flex justify-between items-center">
+            <h1 className="text-3xl font-bold">Admin Panel</h1>
+            <button onClick={handleLogout} className="flex items-center gap-2 text-sm font-semibold text-red-500"><LogOut size={18}/> Keluar</button>
+          </div>
+          <AdminDashboard />
+        </div> : <div className="text-center py-20">Akses Ditolak</div>;
+      case 'login':
+        return <AuthWrapper type="login" setTab={setActiveTab} />;
+      case 'register':
+        return <AuthWrapper type="register" setTab={setActiveTab} />;
+      case 'features':
+        return <FeaturesView />;
+      default:
+        return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
+    }
+  };
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Zap className="animate-pulse text-indigo-600" size={48} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F9FAFB] font-sans text-gray-900">
+      <Joyride 
+        {...({
+          steps: tourSteps,
+          run: runTour,
+          continuous: true,
+          showProgress: true,
+          showSkipButton: true,
+          styles: {
+            options: {
+              primaryColor: '#4f46e5',
+              zIndex: 1000,
+            }
+          },
+          locale: {
+            back: 'Kembali',
+            close: 'Tutup',
+            last: 'Selesai',
+            next: 'Lanjut',
+            skip: 'Lewati'
+          },
+          callback: handleTourCallback
+        } as any)}
+      />
+      <Navbar user={user} onNavigate={setActiveTab} activeTab={activeTab} />
+      
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+          >
+            {renderContent()}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+      
+      <footer className="bg-white border-t border-gray-100 py-12 mt-20">
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <div className="flex items-center justify-center gap-2 mb-4">
+             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold">D</span>
+              </div>
+              <span className="font-bold text-xl tracking-tight">DigiSell</span>
+          </div>
+          <p className="text-gray-400 text-sm">© 2026 DigiAffiliate Store. Platform Modern Produk Digital.</p>
+          <button 
+            onClick={() => setRunTour(true)}
+            className="mt-4 text-indigo-600 font-bold hover:underline flex items-center justify-center gap-2 mx-auto"
+          >
+            <BookOpen size={18} /> Panduan Platform
+          </button>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPricing: () => void }) {
+  return (
+    <div className="space-y-32">
+       <div className="flex flex-col md:flex-row gap-12 items-center">
+        <div className="flex-1 space-y-8 text-center md:text-left">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold uppercase tracking-wider">
+            <Star size={14} /> Solusi Digital Terbaik
+          </div>
+          <h1 className="text-6xl md:text-7xl font-extrabold tracking-tighter leading-[0.85] text-gray-900">
+            Kembangkan <br/> Aset Digital <br/> <span className="text-indigo-600">Anda Sekarang.</span>
+          </h1>
+          <p className="text-xl text-gray-500 max-w-lg mx-auto md:mx-0">
+            Akses ribuan produk digital berkualitas tinggi dan sistem afiliasi yang memberikan komisi hingga 50%.
+          </p>
+          <div className="flex flex-wrap gap-4 justify-center md:justify-start">
+            <button 
+              onClick={onStart}
+              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold hover:shadow-xl hover:shadow-indigo-100 transition-all flex items-center gap-2"
+            >
+              Mulai Belanja <ArrowRight size={20} />
+            </button>
+            <button 
+              onClick={onViewPricing}
+              className="border-2 border-gray-200 px-8 py-4 rounded-2xl font-bold hover:bg-gray-50 transition-all"
+            >
+              Lihat Paket
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 w-full max-w-xl">
+           <div className="relative">
+              <div className="absolute -inset-4 bg-indigo-500 opacity-10 blur-3xl rounded-full"></div>
+              <img 
+                src="https://picsum.photos/seed/dashboard/1200/800" 
+                className="relative rounded-[2.5rem] shadow-2xl border border-white/50" 
+                referrerPolicy="no-referrer"
+              />
+           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <FeatureCard 
+          icon={<ShieldCheck className="text-indigo-600" />} 
+          title="Keamanan Terjamin" 
+          desc="Setiap transaksi diproses dengan enkripsi tingkat tinggi demi keamanan data Anda."
+        />
+        <FeatureCard 
+          icon={<Zap className="text-indigo-600" />} 
+          title="Instan Akses" 
+          desc="Produk langsung tersedia di dashboard Anda segera setelah pembayaran dikonfirmasi."
+        />
+        <FeatureCard 
+          icon={<CreditIcon className="text-indigo-600" />} 
+          title="Pembayaran Mudah" 
+          desc="Mendukung QRIS, Virtual Account, hingga E-Wallet untuk kemudahan transaksi."
+        />
+      </div>
+
+      <div className="pt-20 border-t border-gray-100">
+        <PricingView />
+      </div>
+    </div>
+  );
+}
+
+function ProductCard({ product, onPurchase, user, onToggleWishlist }: { product: Product, onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void }) {
+  const isWishlisted = user?.wishlist?.includes(product.id) || false;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      className="bg-white rounded-[2rem] overflow-hidden border border-gray-100 shadow-sm hover:shadow-xl transition-all group relative h-full flex flex-col"
+    >
+      <div className="h-56 relative overflow-hidden">
+          <img 
+            src={product.image} 
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+            referrerPolicy="no-referrer" 
+          />
+          
+          {/* Interactive Overlay */}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            whileHover={{ opacity: 1 }}
+            className="absolute inset-0 bg-indigo-900/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4 transition-opacity duration-300 opacity-0 group-hover:opacity-100 p-6 z-20"
+          >
+             <motion.button 
+               whileHover={{ scale: 1.05 }}
+               whileTap={{ scale: 0.95 }}
+               className="w-full max-w-[160px] bg-white text-indigo-600 py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-2xl hover:bg-indigo-50 transition-colors"
+             >
+               <Eye size={18} />
+               Lihat Detail
+             </motion.button>
+             <motion.button 
+               whileHover={{ scale: 1.05 }}
+               whileTap={{ scale: 0.95 }}
+               onClick={(e) => {
+                 e.stopPropagation();
+                 onToggleWishlist(product.id);
+               }}
+               className={`w-full max-w-[160px] py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-2xl transition-all border ${
+                 isWishlisted 
+                 ? 'bg-red-500 border-red-500 text-white hover:bg-red-600' 
+                 : 'bg-white/10 border-white/30 text-white backdrop-blur-md hover:bg-white hover:text-red-500 hover:border-white'
+               }`}
+             >
+               <Heart size={18} fill={isWishlisted ? "currentColor" : "none"} />
+               {isWishlisted ? 'Tersimpan' : 'Wishlist'}
+             </motion.button>
+          </motion.div>
+
+          {/* Persistent Wishlist Badge (Always visible if wishlisted) */}
+          {isWishlisted && (
+             <motion.div 
+               initial={{ scale: 0 }}
+               animate={{ scale: 1 }}
+               className="absolute top-4 left-4 bg-red-500 text-white p-2 rounded-full shadow-lg z-10"
+             >
+                <Heart size={12} fill="currentColor" />
+             </motion.div>
+          )}
+
+          <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-xl px-4 py-1.5 rounded-full text-[10px] font-black text-indigo-600 z-10 shadow-sm uppercase tracking-wider">
+            {product.category}
+          </div>
+      </div>
+      
+      <div className="p-8 flex flex-col flex-1 space-y-4">
+         <div className="flex-1 space-y-3">
+           <h3 className="text-xl font-bold text-gray-900 group-hover:text-indigo-600 transition-colors line-clamp-1">{product.name}</h3>
+           <p className="text-gray-500 text-sm line-clamp-3 leading-relaxed">{product.description}</p>
+         </div>
+         
+         <div className="pt-6 flex items-center justify-between border-t border-gray-100/50 mt-auto">
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Harga Dasar</p>
+              <p className="text-2xl font-black text-gray-900">
+                <span className="text-xs font-medium mr-1 tracking-tight">Rp</span>
+                {product.price.toLocaleString('id-ID')}
+              </p>
+            </div>
+            <motion.button 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onPurchase(product)}
+              className="bg-indigo-600 text-white px-7 py-3.5 rounded-2xl font-bold hover:shadow-lg hover:bg-indigo-700 transition-all text-sm shadow-indigo-100 border-b-4 border-indigo-800"
+            >Beli Sekarang</motion.button>
+         </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function ProductCatalog({ products, onPurchase, user, onToggleWishlist }: { products: Product[], onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void }) {
+  return (
+    <div className="space-y-16">
+      <div className="text-center max-w-3xl mx-auto space-y-6">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          className="inline-block bg-indigo-50 text-indigo-600 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest mb-2"
+        >
+          Katalog Produk
+        </motion.div>
+        <h2 className="text-5xl font-black tracking-tight text-gray-900 leading-[1.1]">Pilihan Produk Digital Terbaik</h2>
+        <p className="text-gray-500 text-lg leading-relaxed">Pilih dari berbagai pilihan produk digital untuk meningkatkan produktivitas dan finansial Anda melalui ekosistem kami.</p>
+      </div>
+
+      <div id="product-catalog" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+        {products.map(product => (
+          <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WishlistView({ products, user, onPurchase, onToggleWishlist, onNavigate }: { products: Product[], user: User, onPurchase: (p: Product) => void, onToggleWishlist: (id: string) => void, onNavigate: (tab: any) => void }) {
+  const wishlistedProducts = products.filter(p => user.wishlist?.includes(p.id));
+
+  return (
+    <div className="space-y-16">
+      <div className="text-center max-w-3xl mx-auto space-y-6">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          className="inline-block bg-red-50 text-red-500 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest mb-2"
+        >
+          Wishlist Anda
+        </motion.div>
+        <h2 className="text-5xl font-black tracking-tight text-gray-900 leading-[1.1]">Produk Impian Anda</h2>
+        <p className="text-gray-500 text-lg leading-relaxed">Simpan produk yang Anda minati dan akses kembali kapan saja untuk mulai menghasilkan cuan.</p>
+      </div>
+
+      {wishlistedProducts.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+          {wishlistedProducts.map(product => (
+            <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} />
+          ))}
+        </div>
+      ) : (
+        <div className="bg-white p-20 rounded-[3rem] border-2 border-dashed border-gray-100 text-center space-y-6">
+           <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-8">
+              <Heart size={48} />
+           </div>
+           <h3 className="text-2xl font-bold text-gray-900">Wah, Wishlist Masih Kosong</h3>
+           <p className="text-gray-500 max-w-md mx-auto">Jelajahi katalog kami dan klik ikon hati pada produk yang Anda sukai untuk menyimpannya di sini.</p>
+           <button 
+             onClick={() => onNavigate('products')}
+             className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold hover:shadow-xl transition-all"
+           >Jelajahi Katalog</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t: any) => void }) {
+  return (
+    <div className="max-w-md mx-auto py-12 space-y-8 bg-white p-10 rounded-[2.5rem] border border-gray-100 shadow-sm">
+      <div className="text-center space-y-2">
+         <h2 className="text-3xl font-extrabold">{type === 'login' ? 'Selamat Datang' : 'Buat Akun'}</h2>
+         <p className="text-gray-500 text-sm">
+           {type === 'login' ? 'Masuk untuk mengelola afiliasi Anda' : 'Bergabung sebagai afiliasi dan mulai hasilkan cuan'}
+         </p>
+      </div>
+      {type === 'login' ? <LoginForm onSuccess={() => setTab('home')} /> : <RegisterForm onSuccess={() => setTab('home')} />}
+      <div className="text-center">
+         <button 
+           onClick={() => setTab(type === 'login' ? 'register' : 'login')}
+           className="text-sm font-medium text-gray-400 hover:text-indigo-600"
+         >
+           {type === 'login' ? 'Belum punya akun? Daftar' : 'Sudah punya akun? Masuk'}
+         </button>
+      </div>
+    </div>
+  );
+}
+
+function AffiliateDashboard({ data, user, onLogout }: { data: AffiliateStats, user: User, onLogout: () => void }) {
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [topProducts, setTopProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Filter States
+  const [dateFilter, setDateFilter] = useState<'all' | '7days' | 'month' | 'custom'>('all');
+  const [productFilter, setProductFilter] = useState<string>('all');
+  const [customRange, setCustomRange] = useState({ start: '', end: '' });
+
+  useEffect(() => {
+    const fetchSales = async () => {
+      try {
+        const q = query(
+          collection(db, 'sales'),
+          where('affiliateId', '==', user.id),
+          orderBy('createdAt', 'desc')
+        );
+        const snap = await getDocs(q);
+        const salesData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+        setSales(salesData);
+
+        // Process Chart Data (Last 7 days)
+        const days = 7;
+        const now = new Date();
+        const dataMap: any = {};
+        
+        for (let i = days - 1; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(now.getDate() - i);
+          const key = d.toISOString().split('T')[0];
+          dataMap[key] = { date: d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), sales: 0, commission: 0 };
+        }
+
+        salesData.forEach(sale => {
+          if (sale.createdAt) {
+            const saleDate = sale.createdAt.split('T')[0];
+            if (dataMap[saleDate]) {
+              dataMap[saleDate].sales += 1;
+              dataMap[saleDate].commission += (sale.commission || 0);
+            }
+          }
+        });
+
+        setChartData(Object.values(dataMap));
+
+        // Process Top Products
+        const prodMap: any = {};
+        salesData.forEach(sale => {
+          const name = sale.productName || 'Produk Digital';
+          if (!prodMap[name]) {
+            prodMap[name] = { name, sales: 0, totalCommission: 0 };
+          }
+          prodMap[name].sales += 1;
+          prodMap[name].totalCommission += (sale.commission || 0);
+        });
+
+        const sortedProds = Object.values(prodMap)
+          .sort((a: any, b: any) => b.sales - a.sales)
+          .slice(0, 5);
+        setTopProducts(sortedProds);
+
+      } catch (err) {
+        console.error("Error fetching sales:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSales();
+  }, [user.id]);
+
+  const uniqueProducts = Array.from(new Set(sales.map(s => s.productName || 'Produk Digital')));
+
+  const filteredSales = sales.filter(sale => {
+    // Product Filter
+    if (productFilter !== 'all' && sale.productName !== productFilter) return false;
+
+    // Date Filter
+    if (dateFilter === 'all') return true;
+
+    const saleDate = new Date(sale.createdAt);
+    const now = new Date();
+
+    if (dateFilter === '7days') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(now.getDate() - 7);
+      return saleDate >= sevenDaysAgo;
+    }
+
+    if (dateFilter === 'month') {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      return saleDate >= startOfMonth;
+    }
+
+    if (dateFilter === 'custom' && customRange.start && customRange.end) {
+      const start = new Date(customRange.start);
+      const end = new Date(customRange.end);
+      end.setHours(23, 59, 59, 999);
+      return saleDate >= start && saleDate <= end;
+    }
+
+    return true;
+  });
+
+  return (
+    <div className="space-y-12">
+       <div className="flex justify-between items-center">
+          <h2 className="text-3xl font-bold tracking-tight">Afiliasi Dashboard</h2>
+          <button onClick={onLogout} className="text-red-500 font-bold text-sm flex items-center gap-2"><LogOut size={18}/> Keluar</button>
+       </div>
+
+       <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(user.commissionEarned || 0)} icon={<BarChart3 />} trend="+15%" />
+          <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString()} icon={<ShoppingBag />} trend="+5" />
+          <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
+       </div>
+
+       <div id="commission-chart" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+          <div className="flex justify-between items-center px-2">
+             <h3 className="text-xl font-bold">Tren Komisi (7 Hari Terakhir)</h3>
+          </div>
+          <div className="h-[300px] w-full">
+             <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={chartData}>
+                 <defs>
+                   <linearGradient id="colorComm" x1="0" y1="0" x2="0" y2="1">
+                     <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.1}/>
+                     <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                   </linearGradient>
+                 </defs>
+                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                 <XAxis 
+                   dataKey="date" 
+                   axisLine={false} 
+                   tickLine={false} 
+                   tick={{ fontSize: 12, fill: '#9ca3af' }}
+                   dy={10}
+                 />
+                 <YAxis 
+                   axisLine={false} 
+                   tickLine={false} 
+                   tick={{ fontSize: 12, fill: '#9ca3af' }}
+                   tickFormatter={(val) => `Rp${(val/1000).toFixed(0)}k`}
+                 />
+                 <Tooltip 
+                   contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                   formatter={(val: any) => [`Rp ${val.toLocaleString('id-ID')}`, 'Komisi']}
+                 />
+                 <Area 
+                   type="monotone" 
+                   dataKey="commission" 
+                   stroke="#4f46e5" 
+                   strokeWidth={3}
+                   fillOpacity={1} 
+                   fill="url(#colorComm)" 
+                 />
+               </AreaChart>
+             </ResponsiveContainer>
+          </div>
+       </div>
+
+       <div id="referral-link" className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-10 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-indigo-100">
+           <div className="space-y-2">
+              <h3 className="text-2xl font-bold">Link Referal Aktif</h3>
+              <p className="text-indigo-100 opacity-80">Gunakan link ini untuk promosi. Cookies ditanam selama 30 hari.</p>
+           </div>
+           <div className="bg-white/10 backdrop-blur-md p-2 rounded-2xl flex gap-4">
+              <input readOnly value={data.referralLink} className="flex-1 bg-transparent px-4 font-mono text-sm border-none focus:ring-0" />
+              <button onClick={() => {
+                navigator.clipboard.writeText(data.referralLink);
+                alert('Link disalin!');
+              }} className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-all">Salin</button>
+           </div>
+       </div>
+
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Top Selling Products */}
+          <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+             <div className="flex items-center gap-3">
+                <TrendingUp className="text-indigo-600" size={24} />
+                <h3 className="text-xl font-bold">Produk Terlaris Anda</h3>
+             </div>
+             <div className="space-y-4">
+                {topProducts.map((prod, i) => (
+                  <div key={i} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl hover:bg-indigo-50 transition-colors">
+                     <div className="space-y-1">
+                        <p className="font-bold text-gray-900">{prod.name}</p>
+                        <p className="text-xs text-gray-500 font-medium uppercase tracking-widest">{prod.sales} Penjualan Berhasil</p>
+                     </div>
+                     <div className="text-right">
+                        <p className="text-indigo-600 font-extrabold">Rp {prod.totalCommission.toLocaleString('id-ID')}</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest text-right">Total Komisi</p>
+                     </div>
+                  </div>
+                ))}
+                {topProducts.length === 0 && (
+                  <div className="py-12 text-center text-gray-400">Belum ada data produk terlaris.</div>
+                 )}
+              </div>
+           </div>
+
+           {/* Sales Distribution Summary */}
+           <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-10 rounded-[2.5rem] text-white space-y-8 flex flex-col justify-center shadow-xl shadow-indigo-100">
+              <div className="space-y-2">
+                 <h3 className="text-3xl font-bold">Ringkasan Performa</h3>
+                 <p className="text-indigo-100 opacity-80 text-lg">Statistik performa Anda dalam seminggu terakhir.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-6">
+                 <div className="bg-white/10 backdrop-blur-md p-6 rounded-3xl space-y-1">
+                    <p className="text-xs font-bold uppercase tracking-widest opacity-60">Avg. Comm per Sale</p>
+                    <p className="text-2xl font-bold">
+                      Rp {sales.length > 0 ? (sales.reduce((acc, s) => acc + (s.commission || 0), 0) / sales.length).toLocaleString('id-ID') : '0'}
+                    </p>
+                 </div>
+                 <div className="bg-white/10 backdrop-blur-md p-6 rounded-3xl space-y-1">
+                    <p className="text-xs font-bold uppercase tracking-widest opacity-60">Konversi Klik</p>
+                    <p className="text-2xl font-bold">
+                      {data.totalClicks > 0 ? ((sales.length / data.totalClicks) * 100).toFixed(1) : '0'}%
+                    </p>
+                 </div>
+              </div>
+           </div>
+        </div>
+
+       {/* Sales History Section */}
+       <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm">
+          <div className="p-8 border-b border-gray-100 space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-bold">Riwayat Penjualan Referal</h3>
+              <span className="text-sm font-medium text-gray-400">{filteredSales.length} Transaksi Sesuai Filter</span>
+            </div>
+
+            <div className="flex flex-wrap gap-4 items-center bg-gray-50 p-6 rounded-3xl border border-gray-100">
+               <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Periode Waktu</p>
+                  <select 
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value as any)}
+                    className="bg-white border-gray-200 rounded-xl text-sm font-medium focus:ring-indigo-500 focus:border-indigo-500 min-w-[150px]"
+                  >
+                    <option value="all">Semua Waktu</option>
+                    <option value="7days">7 Hari Terakhir</option>
+                    <option value="month">Bulan Ini</option>
+                    <option value="custom">Rentang Custom</option>
+                  </select>
+               </div>
+
+               {dateFilter === 'custom' && (
+                 <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
+                   <div className="space-y-1.5">
+                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Mulai</p>
+                     <input 
+                       type="date" 
+                       value={customRange.start}
+                       onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                       className="bg-white border-gray-200 rounded-xl text-sm font-medium"
+                     />
+                   </div>
+                   <div className="space-y-1.5">
+                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Sampai</p>
+                     <input 
+                       type="date" 
+                       value={customRange.end}
+                       onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                       className="bg-white border-gray-200 rounded-xl text-sm font-medium"
+                     />
+                   </div>
+                 </div>
+               )}
+
+               <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Filter Produk</p>
+                  <select 
+                    value={productFilter}
+                    onChange={(e) => setProductFilter(e.target.value)}
+                    className="bg-white border-gray-200 rounded-xl text-sm font-medium focus:ring-indigo-500 focus:border-indigo-500 min-w-[200px]"
+                  >
+                    <option value="all">Semua Produk</option>
+                    {uniqueProducts.map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+               </div>
+
+               <div className="flex-1" />
+               
+               {(dateFilter !== 'all' || productFilter !== 'all') && (
+                 <button 
+                   onClick={() => {
+                     setDateFilter('all');
+                     setProductFilter('all');
+                     setCustomRange({ start: '', end: '' });
+                   }}
+                   className="text-indigo-600 text-sm font-bold hover:underline"
+                 >
+                   Reset Filter
+                 </button>
+               )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-gray-50 text-gray-400 text-[10px] font-bold uppercase tracking-widest">
+                  <th className="px-8 py-4">Tanggal</th>
+                  <th className="px-8 py-4">Produk</th>
+                  <th className="px-8 py-4">Buyer</th>
+                  <th className="px-8 py-4">Komisi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredSales.map((sale) => (
+                  <tr key={sale.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-8 py-4 text-sm text-gray-500">
+                      {sale.createdAt ? new Date(sale.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                    </td>
+                    <td className="px-8 py-4 font-bold text-gray-900">{sale.productName || 'Produk Digital'}</td>
+                    <td className="px-8 py-4 text-sm text-gray-500 lowercase">{sale.buyerEmail?.split('@')[0]}***</td>
+                    <td className="px-8 py-4 text-indigo-600 font-bold">
+                      Rp {(sale.commission || 0).toLocaleString('id-ID')}
+                    </td>
+                  </tr>
+                ))}
+                {filteredSales.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={4} className="px-8 py-12 text-center text-gray-400">
+                      Tidak ada data penjualan yang sesuai dengan filter Anda.
+                    </td>
+                  </tr>
+                )}
+                {loading && (
+                   <tr>
+                    <td colSpan={4} className="px-8 py-12 text-center">
+                      <Zap className="animate-spin inline-block text-indigo-600" size={24} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+       </div>
+    </div>
+  );
+}
+
+function PricingView() {
+  const plans = [
+    {
+      name: "Starter (Gratis)",
+      price: "Rp 0",
+      desc: "Cocok untuk pemula yang ingin mencoba sistem afiliasi.",
+      features: ["Komisi 5%", "Dashboard Dasar", "1 Link Referal", "Materi Dasar LMS"],
+      btn: "Mulai Gratis",
+      popular: false
+    },
+    {
+      name: "Business (Gold)",
+      price: "Rp 249rb",
+      desc: "Paket paling populer untuk afiliasi serius.",
+      features: ["Komisi 15%", "Dashboard Pro", "Unlimited Link", "Akses Full LMS", "Marketing Kit", "Email Support"],
+      btn: "Pilih Business",
+      popular: true
+    },
+    {
+      name: "Enterprise (Diamond)",
+      price: "Rp 999rb",
+      desc: "Untuk agensi dan marketer profesional.",
+      features: ["Komisi 30%", "Custom Branding", "Multi-user Admin", "API Access", "Prioritas Support", "Webinar Eksklusif"],
+      btn: "Hubungi Sales",
+      popular: false
+    }
+  ];
+
+  const comparison = [
+    { feature: "Persentase Komisi", starter: "5%", business: "15%", enterprise: "30%" },
+    { feature: "Manajemen Produk", starter: "Tersedia", business: "Tersedia", enterprise: "Tersedia" },
+    { feature: "Marketing Kit", starter: false, business: "Tersedia", enterprise: "Tersedia" },
+    { feature: "Custom Domain", starter: false, business: false, enterprise: "Tersedia" },
+    { feature: "Materi LMS", starter: "Dasar", business: "Lengkap", enterprise: "Lengkap" },
+    { feature: "Support", starter: "Community", business: "Email", enterprise: "Prioritas 24/7" },
+  ];
+
+  return (
+    <div className="py-20 space-y-24">
+      <div className="text-center max-w-2xl mx-auto space-y-4">
+        <h2 className="text-5xl font-extrabold tracking-tight">Pilih Paket yang Sesuai</h2>
+        <p className="text-gray-500 text-lg">Investasikan masa depan digital Anda dengan paket yang tepat.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {plans.map((plan, i) => (
+          <div key={i} className={`relative p-10 rounded-[2.5rem] border ${plan.popular ? 'border-indigo-600 border-2 shadow-2xl shadow-indigo-100 scale-105 z-10' : 'border-gray-100 bg-white shadow-sm'} space-y-8 flex flex-col`}>
+            {plan.popular && (
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-600 text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-widest">Paling Populer</div>
+            )}
+            <div className="space-y-4">
+              <h3 className="text-2xl font-bold">{plan.name}</h3>
+              <div className="flex items-baseline gap-1">
+                <span className="text-4xl font-extrabold">{plan.price}</span>
+                <span className="text-gray-400 text-sm font-medium">/bln</span>
+              </div>
+              <p className="text-gray-500 text-sm">{plan.desc}</p>
+            </div>
+            <div className="space-y-4 flex-1">
+              {plan.features.map((f, j) => (
+                <div key={j} className="flex gap-3 items-center text-sm font-medium text-gray-700">
+                  <div className="w-5 h-5 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
+                    <Check size={12} strokeWidth={3} />
+                  </div>
+                  {f}
+                </div>
+              ))}
+            </div>
+            <button className={`w-full py-4 rounded-2xl font-bold transition-all ${plan.popular ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-900 text-white hover:bg-black'}`}>
+              {plan.btn}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm max-w-4xl mx-auto">
+        <div className="p-8 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="text-2xl font-bold text-center">Perbandingan Detail</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-indigo-50/30 text-indigo-600 text-xs font-bold uppercase tracking-widest">
+                <th className="px-8 py-6">Fitur Utama</th>
+                <th className="px-8 py-6 text-center">Starter</th>
+                <th className="px-8 py-6 text-center">Business</th>
+                <th className="px-8 py-6 text-center">Enterprise</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {comparison.map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-8 py-5 font-bold text-gray-900">{row.feature}</td>
+                  <td className="px-8 py-5 text-center text-sm font-medium">
+                    {typeof row.starter === 'string' ? row.starter : (row.starter ? <Check className="mx-auto text-green-500" /> : <X className="mx-auto text-red-300" />)}
+                  </td>
+                  <td className="px-8 py-5 text-center text-sm font-medium">
+                    {typeof row.business === 'string' ? row.business : (row.business ? <Check className="mx-auto text-green-500" /> : <X className="mx-auto text-red-300" />)}
+                  </td>
+                  <td className="px-8 py-5 text-center text-sm font-medium">
+                    {typeof row.enterprise === 'string' ? row.enterprise : (row.enterprise ? <Check className="mx-auto text-green-500" /> : <X className="mx-auto text-red-300" />)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeaturesView() {
+  return (
+     <div className="py-20 space-y-32">
+        <div className="text-center max-w-3xl mx-auto space-y-6">
+           <h2 className="text-5xl font-extrabold tracking-tight">Semua yang Anda Butuhkan <br/> dalam Satu Platform</h2>
+           <p className="text-xl text-gray-500">Mulai dari manajemen produk hingga sistem pembelajaran mandiri (LMS) yang terintegrasi.</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
+           <div className="space-y-12">
+              <FeatureItem 
+                icon={<BookOpen size={32} />} 
+                title="Sistem LMS Terpadu" 
+                desc="Akses materi pembelajaran dengan tampilan yang rapi dan terorganisir per modul." 
+              />
+              <FeatureItem 
+                icon={<BarChart3 size={32} />} 
+                title="Laporan Real-time" 
+                desc="Pantau statistik penjualan dan klik afiliasi Anda secara instan di dashboard." 
+              />
+              <FeatureItem 
+                icon={<Users size={32} />} 
+                title="Manajemen Afiliasi" 
+                desc="Program referal yang transparan dengan perhitungan komisi otomatis." 
+              />
+           </div>
+           <div className="bg-gray-100 rounded-[3rem] p-12">
+              <img src="https://picsum.photos/seed/features/800/600" className="rounded-2xl shadow-lg" referrerPolicy="no-referrer" />
+           </div>
+        </div>
+     </div>
+  );
+}
+
+function FeatureItem({ icon, title, desc }: any) {
+  return (
+    <div className="flex gap-6 items-start group">
+       <div className="w-16 h-16 bg-white border border-gray-100 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm group-hover:scale-110 transition-transform">
+          {icon}
+       </div>
+       <div className="space-y-1">
+          <h4 className="text-xl font-bold">{title}</h4>
+          <p className="text-gray-500 leading-relaxed">{desc}</p>
+       </div>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, desc }: any) {
+  return (
+    <div className="p-10 bg-white rounded-[2.5rem] border border-gray-100 space-y-6 hover:shadow-xl transition-all h-full">
+      <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center">
+        {icon}
+      </div>
+      <h4 className="text-2xl font-bold">{title}</h4>
+      <p className="text-gray-500 leading-relaxed">{desc}</p>
+    </div>
+  );
+}
+
+function StatsCard({ title, value, icon, trend }: any) {
+  return (
+    <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-4">
+      <div className="flex justify-between items-start">
+        <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
+          {icon}
+        </div>
+        <div className="px-2 py-1 bg-green-50 text-green-600 rounded-lg text-xs font-bold">
+          {trend}
+        </div>
+      </div>
+      <div>
+        <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">{title}</p>
+        <h3 className="text-3xl font-extrabold">{value}</h3>
+      </div>
+    </div>
+  );
+}
