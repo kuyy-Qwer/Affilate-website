@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { auth, db } from '../lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { Mail, Lock, User, Loader2 } from 'lucide-react';
 
@@ -127,6 +127,9 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
       const incomingRef = localStorage.getItem('affiliate_ref');
       
       const res = await createUserWithEmailAndPassword(auth, data.email, data.password);
+      
+      // Send verification email
+      await sendEmailVerification(res.user);
       
       // Generate unique referral code for the new user
       // Pattern: NAME-RANDOM (e.g. BUDI-X9Z2)

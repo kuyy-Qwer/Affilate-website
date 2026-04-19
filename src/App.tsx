@@ -25,7 +25,8 @@ import {
   Eye,
   Heart,
   Ticket,
-  Wallet
+  Wallet,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -36,7 +37,10 @@ import {
   Tooltip, 
   ResponsiveContainer, 
   AreaChart, 
-  Area 
+  Area,
+  BarChart,
+  Bar,
+  Legend
 } from 'recharts';
 import { Joyride, Step } from 'react-joyride';
 import { auth, db } from './lib/firebase';
@@ -57,7 +61,10 @@ export default function App() {
     activeTab, 
     setActiveTab, 
     initAuth, 
-    fetchProducts 
+    fetchProducts,
+    resendVerificationEmail,
+    globalConfig,
+    fetchGlobalConfig
   } = useStore();
 
   const [runTour, setRunTour] = useState(false);
@@ -83,17 +90,41 @@ export default function App() {
     }
   };
 
-  const calculateTotal = (price: number) => {
-    if (!appliedCoupon) return price;
-    if (appliedCoupon.discountType === 'percentage') {
-      return price - (price * (appliedCoupon.discountValue / 100));
+  const getDiscountedPrice = (basePrice: number) => {
+    let finalPrice = basePrice;
+    
+    // 1. Apply Geo-Pricing multiplier
+    if (globalConfig?.geoPricingActive) {
+      const multiplier = user?.isIndonesian !== false ? (globalConfig.idrMultiplier || 1) : (globalConfig.foreignMultiplier || 1.2);
+      finalPrice = finalPrice * multiplier;
     }
-    return Math.max(0, price - appliedCoupon.discountValue);
+
+    // 2. Apply Global Promo (Event)
+    if (globalConfig?.promoActive) {
+      const now = new Date();
+      const start = new Date(globalConfig.promoStart);
+      const end = new Date(globalConfig.promoEnd);
+      if (now >= start && now <= end) {
+        finalPrice = finalPrice - (finalPrice * (globalConfig.promoDiscount / 100));
+      }
+    }
+
+    return Math.round(finalPrice);
+  };
+
+  const calculateTotal = (basePrice: number) => {
+    const adjustedPrice = getDiscountedPrice(basePrice);
+    if (!appliedCoupon) return adjustedPrice;
+    if (appliedCoupon.discountType === 'percentage') {
+      return adjustedPrice - (adjustedPrice * (appliedCoupon.discountValue / 100));
+    }
+    return Math.max(0, adjustedPrice - appliedCoupon.discountValue);
   };
 
   useEffect(() => {
     initAuth();
     fetchProducts();
+    fetchGlobalConfig();
   }, []);
 
   useEffect(() => {
@@ -264,13 +295,17 @@ export default function App() {
   };
 
   const renderContent = () => {
+    if (user && !user.emailVerified && ['affiliate', 'admin'].includes(activeTab)) {
+      return <VerificationRequired />;
+    }
+
     switch (activeTab) {
       case 'home':
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
       case 'products':
-        return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} user={user} onToggleWishlist={updateWishlist} />;
+        return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} user={user} onToggleWishlist={updateWishlist} getDiscountedPrice={getDiscountedPrice} />;
       case 'wishlist':
-        return user ? <WishlistView products={products} user={user} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
+        return user ? <WishlistView products={products} user={user} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} getDiscountedPrice={getDiscountedPrice} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'pricing':
         return <PricingView />;
       case 'affiliate':
@@ -292,6 +327,8 @@ export default function App() {
           </div>
           <AdminDashboard />
         </div> : <div className="text-center py-20">Akses Ditolak</div>;
+      case 'profile':
+        return user ? <UserProfile /> : <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'login':
         return <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'register':
@@ -408,10 +445,15 @@ export default function App() {
 
                <button 
                  onClick={handlePurchase}
-                 disabled={isBuying}
+                 disabled={isBuying || !user?.emailVerified}
                  className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                >
-                 {isBuying ? <Zap className="animate-spin" size={24} /> : (
+                 {isBuying ? <Zap className="animate-spin" size={24} /> : !user?.emailVerified ? (
+                   <>
+                     <AlertTriangle size={24} />
+                     Verifikasi Email untuk Membeli
+                   </>
+                 ) : (
                    <>
                      <CreditIcon size={24} />
                      Bayar & Akses Sekarang
@@ -424,6 +466,29 @@ export default function App() {
       </AnimatePresence>
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {user && !user.emailVerified && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 p-4 bg-amber-50 border border-amber-100 rounded-3xl flex items-center justify-between gap-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-100 rounded-xl text-amber-600">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-amber-900">Email Belum Terverifikasi</p>
+                <p className="text-xs text-amber-700">Silakan cek inbox Anda untuk mengaktifkan fitur penuh.</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setActiveTab('profile')}
+              className="px-4 py-2 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-colors"
+            >
+              Verifikasi Sekarang
+            </button>
+          </motion.div>
+        )}
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -524,8 +589,10 @@ function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPr
   );
 }
 
-function ProductCard({ product, onPurchase, user, onToggleWishlist }: { product: Product, onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void }) {
+function ProductCard({ product, onPurchase, user, onToggleWishlist, getDiscountedPrice }: { product: Product, onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void, getDiscountedPrice: (p: number) => number }) {
   const isWishlisted = user?.wishlist?.includes(product.id) || false;
+  const finalPrice = getDiscountedPrice(product.price);
+  const isDiscounted = finalPrice < product.price;
 
   return (
     <motion.div 
@@ -540,6 +607,13 @@ function ProductCard({ product, onPurchase, user, onToggleWishlist }: { product:
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
             referrerPolicy="no-referrer" 
           />
+          
+          {/* Discount Badge */}
+          {isDiscounted && (
+             <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-full text-[10px] font-black z-10 shadow-lg">
+                OFF {Math.round((1 - finalPrice/product.price) * 100)}%
+             </div>
+          )}
           
           {/* Interactive Overlay */}
           <motion.div 
@@ -615,7 +689,7 @@ function ProductCard({ product, onPurchase, user, onToggleWishlist }: { product:
   );
 }
 
-function ProductCatalog({ products, onPurchase, user, onToggleWishlist }: { products: Product[], onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void }) {
+function ProductCatalog({ products, onPurchase, user, onToggleWishlist, getDiscountedPrice }: { products: Product[], onPurchase: (p: Product) => void, user: User | null, onToggleWishlist: (id: string) => void, getDiscountedPrice: (p: number) => number }) {
   return (
     <div className="space-y-16">
       <div className="text-center max-w-3xl mx-auto space-y-6">
@@ -632,14 +706,14 @@ function ProductCatalog({ products, onPurchase, user, onToggleWishlist }: { prod
 
       <div id="product-catalog" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
         {products.map(product => (
-          <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} />
+          <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} getDiscountedPrice={getDiscountedPrice} />
         ))}
       </div>
     </div>
   );
 }
 
-function WishlistView({ products, user, onPurchase, onToggleWishlist, onNavigate }: { products: Product[], user: User, onPurchase: (p: Product) => void, onToggleWishlist: (id: string) => void, onNavigate: (tab: any) => void }) {
+function WishlistView({ products, user, onPurchase, onToggleWishlist, onNavigate, getDiscountedPrice }: { products: Product[], user: User, onPurchase: (p: Product) => void, onToggleWishlist: (id: string) => void, onNavigate: (tab: any) => void, getDiscountedPrice: (p: number) => number }) {
   const wishlistedProducts = products.filter(p => user.wishlist?.includes(p.id));
 
   return (
@@ -659,7 +733,7 @@ function WishlistView({ products, user, onPurchase, onToggleWishlist, onNavigate
       {wishlistedProducts.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
           {wishlistedProducts.map(product => (
-            <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} />
+            <ProductCard key={product.id} product={product} onPurchase={onPurchase} user={user} onToggleWishlist={onToggleWishlist} getDiscountedPrice={getDiscountedPrice} />
           ))}
         </div>
       ) : (
@@ -697,6 +771,178 @@ function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t:
            {type === 'login' ? 'Belum punya akun? Daftar' : 'Sudah punya akun? Masuk'}
          </button>
       </div>
+    </div>
+  );
+}
+
+function VerificationRequired() {
+  const { resendVerificationEmail } = useStore();
+  const [sent, setSent] = useState(false);
+
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white max-w-md w-full p-10 rounded-[2.5rem] border border-gray-100 text-center space-y-6 shadow-sm"
+      >
+        <div className="w-20 h-20 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto text-amber-500">
+          <AlertTriangle size={40} />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold tracking-tight">Verifikasi Email Anda</h2>
+          <p className="text-gray-500 font-medium">Anda perlu memverifikasi email untuk mengakses fitur dashboard ini.</p>
+        </div>
+        <div className="pt-4 space-y-3">
+          <button 
+            onClick={async () => {
+              await resendVerificationEmail();
+              setSent(true);
+            }}
+            disabled={sent}
+            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50"
+          >
+            {sent ? 'Email Terkirim!' : 'Kirim Ulang Verifikasi'}
+          </button>
+          <button 
+            onClick={() => window.location.reload()}
+            className="w-full py-4 bg-gray-50 text-gray-600 rounded-2xl font-bold hover:bg-gray-100 transition-all underline decoration-gray-200"
+          >
+            Sudah Verifikasi? Muat Ulang
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function UserProfile() {
+  const { user, updateUserProfile } = useStore();
+  const [name, setName] = useState(user?.name || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [isIndonesian, setIsIndonesian] = useState(user?.isIndonesian !== false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      await updateUserProfile({ name, email, isIndonesian });
+      setIsEditing(false);
+      alert('Profil berhasil diperbaharui');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <div className="max-w-2xl mx-auto py-12 px-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm"
+      >
+        <div className="bg-indigo-600 h-32 relative">
+          <div className="absolute -bottom-10 left-10 w-20 h-20 bg-white rounded-3xl p-1 shadow-lg">
+            <div className="w-full h-full bg-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 text-3xl font-bold">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+          </div>
+        </div>
+        <div className="pt-16 pb-10 px-10">
+          <div className="flex justify-between items-start mb-8">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">{user.name}</h1>
+              <p className="text-gray-500 font-medium uppercase tracking-widest text-xs mt-1">{user.role}</p>
+            </div>
+            {!isEditing && (
+              <button 
+                onClick={() => setIsEditing(true)}
+                className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-indigo-600 transition-all"
+              >
+                Edit Profil
+              </button>
+            )}
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase px-2">Nama Lengkap</label>
+                <input 
+                  disabled={!isEditing}
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium disabled:opacity-75"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase px-2">Alamat Email</label>
+                <input 
+                  disabled={!isEditing}
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium disabled:opacity-75"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase px-2">Domisili Pembeli (Simulasi Harga)</label>
+                <select 
+                  disabled={!isEditing}
+                  value={isIndonesian ? 'true' : 'false'} 
+                  onChange={e => setIsIndonesian(e.target.value === 'true')}
+                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold disabled:opacity-75"
+                >
+                  <option value="true">🇮🇩 Indonesia (Harga Lokal)</option>
+                  <option value="false">🌏 Luar Negeri (Harga Internasional)</option>
+                </select>
+              </div>
+            </div>
+
+            {isEditing && (
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="submit"
+                  disabled={isSaving}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50"
+                >
+                  {isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setName(user.name);
+                    setEmail(user.email);
+                  }}
+                  className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold hover:bg-gray-200 transition-all"
+                >
+                  Batal
+                </button>
+              </div>
+            )}
+          </form>
+
+          {!isEditing && (
+            <div className="mt-12 pt-8 border-t border-gray-100 grid grid-cols-2 gap-8">
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">ID Pengguna</p>
+                <p className="font-mono text-xs text-gray-500">{user.id}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Kode Referal</p>
+                <p className="font-mono text-xs text-indigo-600 font-bold">{user.referralCode || '-'}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -766,30 +1012,37 @@ function AffiliateDashboard({ data, user, onLogout }: { data: AffiliateStats, us
         const salesData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
         setSales(salesData);
 
-        // Process Chart Data (Last 7 days)
-        const days = 7;
+        // Process Chart Data (Last 30 days stacked by product)
+        const days = 30;
         const now = new Date();
         const dataMap: any = {};
+        const productNames = new Set<string>();
         
         for (let i = days - 1; i >= 0; i--) {
           const d = new Date();
           d.setDate(now.getDate() - i);
           const key = d.toISOString().split('T')[0];
-          dataMap[key] = { date: d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), sales: 0, commission: 0 };
+          dataMap[key] = { 
+            date: d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
+            totalSales: 0
+          };
         }
 
         salesData.forEach(sale => {
           if (sale.createdAt) {
             const saleDate = sale.createdAt.split('T')[0];
+            const productName = sale.productName || 'Lainnya';
             if (dataMap[saleDate]) {
-              dataMap[saleDate].sales += 1;
-              dataMap[saleDate].commission += (sale.commission || 0);
+              dataMap[saleDate].totalSales += 1;
+              dataMap[saleDate][productName] = (dataMap[saleDate][productName] || 0) + 1;
+              productNames.add(productName);
             }
           }
         });
 
         setChartData(Object.values(dataMap));
-
+        // We'll store top products separately for the legend/bars
+        
         // Process Top Products
         const prodMap: any = {};
         salesData.forEach(sale => {
@@ -951,49 +1204,52 @@ function AffiliateDashboard({ data, user, onLogout }: { data: AffiliateStats, us
           )}
         </AnimatePresence>
 
-       <div id="commission-chart" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
-          <div className="flex justify-between items-center px-2">
-             <h3 className="text-xl font-bold">Tren Komisi (7 Hari Terakhir)</h3>
+        <div id="commission-chart" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
+            <div>
+              <h3 className="text-xl font-bold">Analitik Penjualan (30 Hari)</h3>
+              <p className="text-gray-500 text-sm">Visualisasi performa penjualan per produk.</p>
+            </div>
+            <div className="flex items-center gap-2 p-1 bg-gray-50 rounded-xl">
+              <button onClick={() => setDateFilter('7days')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${dateFilter === '7days' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>7H</button>
+              <button onClick={() => setDateFilter('month')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${dateFilter === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>30H</button>
+              <button onClick={() => setDateFilter('all')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${dateFilter === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>Semua</button>
+            </div>
           </div>
           <div className="h-[300px] w-full">
-             <ResponsiveContainer width="100%" height="100%">
-               <AreaChart data={chartData}>
-                 <defs>
-                   <linearGradient id="colorComm" x1="0" y1="0" x2="0" y2="1">
-                     <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.1}/>
-                     <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
-                   </linearGradient>
-                 </defs>
-                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                 <XAxis 
-                   dataKey="date" 
-                   axisLine={false} 
-                   tickLine={false} 
-                   tick={{ fontSize: 12, fill: '#9ca3af' }}
-                   dy={10}
-                 />
-                 <YAxis 
-                   axisLine={false} 
-                   tickLine={false} 
-                   tick={{ fontSize: 12, fill: '#9ca3af' }}
-                   tickFormatter={(val) => `Rp${(val/1000).toFixed(0)}k`}
-                 />
-                 <Tooltip 
-                   contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                   formatter={(val: any) => [`Rp ${val.toLocaleString('id-ID')}`, 'Komisi']}
-                 />
-                 <Area 
-                   type="monotone" 
-                   dataKey="commission" 
-                   stroke="#4f46e5" 
-                   strokeWidth={3}
-                   fillOpacity={1} 
-                   fill="url(#colorComm)" 
-                 />
-               </AreaChart>
-             </ResponsiveContainer>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis 
+                  dataKey="date" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: '#9ca3af', fontSize: 10}} 
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: '#9ca3af', fontSize: 10}} 
+                />
+                <Tooltip 
+                  contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
+                  cursor={{fill: '#f8fafc'}}
+                />
+                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '10px'}} />
+                {Array.from(new Set(sales.map(s => s.productName || 'Lainnya'))).slice(0, 5).map((prodName, idx) => (
+                  <Bar 
+                    key={prodName} 
+                    dataKey={prodName} 
+                    stackId="a" 
+                    fill={['#4f46e5', '#818cf8', '#c7d2fe', '#6366f1', '#a5b4fc'][idx % 5]} 
+                    radius={idx === 0 ? [0, 0, 4, 4] : [0, 0, 0, 0]}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-       </div>
+        </div>
 
        <div id="referral-link" className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-10 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-indigo-100">
            <div className="space-y-2">

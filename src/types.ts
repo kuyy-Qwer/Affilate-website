@@ -9,6 +9,24 @@ export interface ProductModule {
   content: string;
 }
 
+export interface GlobalConfig {
+  id: 'global';
+  promoActive: boolean;
+  promoDiscount: number;
+  promoStart: string;
+  promoEnd: string;
+  geoPricingActive: boolean;
+  idrMultiplier: number;
+  foreignMultiplier: number;
+}
+
+export interface ProductVariant {
+  id: string;
+  name: string;
+  price?: number;
+  sku?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -17,6 +35,7 @@ export interface Product {
   image: string;
   category: string;
   modules?: ProductModule[];
+  variants?: ProductVariant[];
   createdAt: any;
 }
 
@@ -38,6 +57,9 @@ export interface User {
   commissionEarned?: number;
   totalSales?: number;
   totalClicks?: number;
+  emailVerified?: boolean;
+  country?: string;
+  isIndonesian?: boolean;
 }
 
 export interface Coupon {

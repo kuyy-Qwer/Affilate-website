@@ -58,6 +58,13 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                   <LayoutDashboard size={18} />
                   Dashboard
                 </button>
+                <button 
+                  onClick={() => handleNavigate('profile')}
+                  className={`flex items-center gap-2 text-sm font-medium transition-colors ${activeTab === 'profile' ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-600'}`}
+                >
+                  <Users size={18} />
+                  Profil
+                </button>
                 <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-bold text-xs">
                   {user.name.charAt(0).toUpperCase()}
                 </div>
@@ -123,6 +130,7 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                 <MobileNavItem active={activeTab === 'home'} onClick={() => handleNavigate('home')} label="Beranda" />
                 <MobileNavItem active={activeTab === 'products'} onClick={() => handleNavigate('products')} label="Produk" />
                 {user && <MobileNavItem active={activeTab === 'wishlist'} onClick={() => handleNavigate('wishlist')} label="Wishlist" />}
+                {user && <MobileNavItem active={activeTab === 'profile'} onClick={() => handleNavigate('profile')} label="Profil Saya" />}
                 <MobileNavItem active={activeTab === 'features'} onClick={() => handleNavigate('features')} label="Fitur" />
                 <MobileNavItem active={activeTab === 'pricing'} onClick={() => handleNavigate('pricing')} label="Paket" />
                 <MobileNavItem active={activeTab === 'about'} onClick={() => handleNavigate('about')} label="Tentang" />

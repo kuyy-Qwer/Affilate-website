@@ -77,7 +77,8 @@ const updateRoleSchema = z.object({
 const updateUserSchema = z.object({
   userId: z.string().min(1),
   name: z.string().min(1),
-  email: z.string().email()
+  email: z.string().email(),
+  isIndonesian: z.boolean().optional()
 });
 
 async function startServer() {
@@ -90,20 +91,72 @@ async function startServer() {
   app.post('/api/purchase', authenticate, async (req: AuthenticatedRequest, res) => {
     try {
       const validatedData = purchaseSchema.parse(req.body);
-      const { productId, buyerId, buyerEmail, referralCode } = validatedData;
+      const { productId, buyerId, buyerEmail, referralCode, couponId, amount: clientAmount } = validatedData;
       
       const fs = admin.firestore();
       
-      // 1. Get Product Details
-      const productSnap = await fs.collection('products').doc(productId).get();
+      // 1. Get Product Details, Global Config, and Buyer Profile
+      const [productSnap, configSnap, buyerSnap] = await Promise.all([
+        fs.collection('products').doc(productId).get(),
+        fs.collection('settings').doc('global').get(),
+        fs.collection('users').doc(req.user!.uid).get()
+      ]);
+
       if (!productSnap.exists) return res.status(404).json({ error: 'Product not found' });
       const product = productSnap.data();
+      const config = configSnap.exists ? configSnap.data() : null;
+      const buyerProfile = buyerSnap.exists ? buyerSnap.data() : null;
+
+      // 2. Pricing Algorithm
+      let basePrice = product?.price || 0;
+      let finalPrice = basePrice;
+
+      // a. Geo-Pricing
+      if (config?.geoPricingActive) {
+        const multiplier = buyerProfile?.isIndonesian !== false ? (config.idrMultiplier || 1) : (config.foreignMultiplier || 1.2);
+        finalPrice = finalPrice * multiplier;
+      }
+
+      // b. Global Promo (Event)
+      if (config?.promoActive) {
+        const now = new Date();
+        const start = new Date(config.promoStart);
+        const end = new Date(config.promoEnd);
+        if (now >= start && now <= end) {
+          finalPrice = finalPrice - (finalPrice * (config.promoDiscount / 100));
+        }
+      }
+
+      finalPrice = Math.round(finalPrice);
+
+      // c. Coupon Discount
+      if (couponId) {
+        const couponSnap = await fs.collection('coupons').doc(couponId).get();
+        if (couponSnap.exists) {
+          const coupon = couponSnap.data();
+          if (coupon?.isActive) {
+             if (coupon.discountType === 'percentage') {
+               finalPrice = finalPrice - (finalPrice * (coupon.discountValue / 100));
+             } else {
+               finalPrice = Math.max(0, finalPrice - coupon.discountValue);
+             }
+          }
+        }
+      }
+
+      finalPrice = Math.round(finalPrice);
+
+      // Verification (Security Check: Client shouldn't spoof price)
+      if (Math.abs(finalPrice - clientAmount) > 10) { // Allow minor rounding diff
+         console.warn(`Price mismatch: Server ${finalPrice} vs Client ${clientAmount}`);
+         // We'll trust server price for actual transaction logs
+      }
 
       let affiliateId = null;
       let commission = 0;
       const commissionRate = 0.1; // 10% Commission
 
-      // 2. Find Affiliate by Referral Code
+      // 3. Find Affiliate by Referral Code
       if (referralCode) {
         const affiliateQuery = await fs.collection('users')
           .where('referralCode', '==', referralCode)
@@ -113,11 +166,11 @@ async function startServer() {
         if (!affiliateQuery.empty) {
           const affiliateDoc = affiliateQuery.docs[0];
           affiliateId = affiliateDoc.id;
-          commission = Math.floor((product?.price || 0) * commissionRate);
+          commission = Math.floor(finalPrice * commissionRate);
         }
       }
 
-      // 3. Create Sale Document & Update Affiliate Stats atomically
+      // 4. Create Sale Document & Update Affiliate Stats atomically
       const batch = fs.batch();
       const saleRef = fs.collection('sales').doc();
       
@@ -127,7 +180,7 @@ async function startServer() {
         buyerId,
         buyerEmail,
         affiliateId,
-        amount: product?.price,
+        amount: finalPrice,
         commission,
         createdAt: new Date().toISOString()
       });
@@ -213,6 +266,26 @@ async function startServer() {
       await fs.collection('users').doc(userId).update({
         name,
         email,
+        updatedAt: new Date().toISOString()
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation failed', details: err.issues });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route: Update Own Profile
+  app.post('/api/user/update-profile', authenticate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { name, email, isIndonesian } = updateUserSchema.parse({ ...req.body, userId: req.user?.uid });
+      const fs = admin.firestore();
+      await fs.collection('users').doc(req.user!.uid).update({
+        name,
+        email,
+        isIndonesian: isIndonesian ?? true,
         updatedAt: new Date().toISOString()
       });
       res.json({ success: true });

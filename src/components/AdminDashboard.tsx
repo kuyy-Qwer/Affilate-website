@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
-import { Product, User, Coupon, WithdrawalRequest } from '../types';
-import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle } from 'lucide-react';
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, setDoc } from 'firebase/firestore';
+import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig } from '../types';
+import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => void }) {
@@ -34,9 +34,46 @@ function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => v
   );
 }
 
+function AddVariantForm({ onAdd }: { onAdd: (name: string, price?: number, sku?: string) => void }) {
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState<string>('');
+  const [sku, setSku] = useState('');
+
+  return (
+    <div className="flex flex-col md:flex-row gap-2 bg-white p-4 rounded-xl border border-dashed border-gray-300">
+       <input 
+         value={name} 
+         onChange={e => setName(e.target.value)} 
+         placeholder="Varian (ex: Size L)" 
+         className="flex-1 text-sm outline-none px-2 py-1 border-b md:border-b-0 md:border-r border-gray-100"
+       />
+       <input 
+         type="number"
+         value={price} 
+         onChange={e => setPrice(e.target.value)} 
+         placeholder="Harga Spesifik" 
+         className="w-32 text-sm outline-none px-2 py-1 border-b md:border-b-0 md:border-r border-gray-100"
+       />
+       <input 
+         value={sku} 
+         onChange={e => setSku(e.target.value)} 
+         placeholder="SKU" 
+         className="w-32 text-sm outline-none px-2 py-1"
+       />
+       <button 
+         type="button"
+         onClick={() => { if(name) { onAdd(name, price ? parseInt(price) : undefined, sku); setName(''); setPrice(''); setSku(''); } }}
+         className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold"
+       >
+         Tambah
+       </button>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
-  const { getAuthHeaders } = useStore();
-  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals'>('products');
+  const { getAuthHeaders, globalConfig, fetchGlobalConfig } = useStore();
+  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
@@ -55,11 +92,49 @@ export default function AdminDashboard() {
     image: 'https://picsum.photos/seed/tool/800/600'
   });
 
+  const [newPromo, setNewPromo] = useState({
+    promoActive: false,
+    promoDiscount: 0,
+    promoStart: '',
+    promoEnd: '',
+    geoPricingActive: false,
+    idrMultiplier: 1,
+    foreignMultiplier: 1.2
+  });
+
   const [newCoupon, setNewCoupon] = useState({
     code: '',
     discountType: 'percentage' as 'percentage' | 'fixed',
     discountValue: 0
   });
+
+  useEffect(() => {
+    if (globalConfig) {
+      setNewPromo({
+        promoActive: globalConfig.promoActive,
+        promoDiscount: globalConfig.promoDiscount,
+        promoStart: globalConfig.promoStart,
+        promoEnd: globalConfig.promoEnd,
+        geoPricingActive: globalConfig.geoPricingActive,
+        idrMultiplier: globalConfig.idrMultiplier,
+        foreignMultiplier: globalConfig.foreignMultiplier
+      });
+    }
+  }, [globalConfig]);
+
+  const handleUpdateGlobalConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await setDoc(doc(db, 'settings', 'global'), {
+        ...newPromo,
+        id: 'global'
+      });
+      alert('Konfigurasi Global Diperbarui!');
+      fetchGlobalConfig();
+    } catch (err) {
+      alert('Gagal memperbarui konfigurasi');
+    }
+  };
   
   const fetchProducts = async () => {
     try {
@@ -109,7 +184,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchProducts(), fetchUsers(), fetchCoupons(), fetchWithdrawals()]);
+      await Promise.all([fetchProducts(), fetchUsers(), fetchCoupons(), fetchWithdrawals(), fetchGlobalConfig()]);
       setLoading(false);
     };
     init();
@@ -263,6 +338,14 @@ export default function AdminDashboard() {
         >
           <Wallet size={18} /> Pencairan
         </button>
+        <button 
+          onClick={() => setActiveSubTab('events')}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
+            activeSubTab === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Zap size={18} /> Event & Geo
+        </button>
       </div>
 
       {activeSubTab === 'products' ? (
@@ -374,28 +457,63 @@ export default function AdminDashboard() {
                       {editingId === p.id && (
                         <tr>
                           <td colSpan={4} className="px-8 py-8 bg-gray-50">
-                            <div className="space-y-6">
-                                <h4 className="font-bold text-gray-700">Manajemen Modul LMS</h4>
-                                <div className="space-y-4">
-                                  {(p.modules || []).map((m, idx) => (
-                                    <div key={idx} className="flex gap-4 items-start bg-white p-4 rounded-xl border border-gray-200">
-                                        <div className="flex-1">
-                                          <p className="font-bold text-sm">{m.title}</p>
-                                          <p className="text-xs text-gray-400 line-clamp-1">{m.content}</p>
-                                        </div>
-                                        <button onClick={async () => {
-                                          const newModules = (p.modules || []).filter((_, i) => i !== idx);
-                                          await updateDoc(doc(db, 'products', p.id), { modules: newModules });
-                                          fetchProducts();
-                                        }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
-                                    </div>
-                                  ))}
-                                  <AddModuleForm onAdd={async (title, content) => {
-                                      const newModules = [...(p.modules || []), { id: Date.now().toString(), title, content }];
-                                      await updateDoc(doc(db, 'products', p.id), { modules: newModules });
-                                      fetchProducts();
-                                  }} />
-                                </div>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                              <div className="space-y-6">
+                                  <div className="flex items-center gap-2">
+                                    <Shield size={18} className="text-gray-400" />
+                                    <h4 className="font-bold text-gray-700">Manajemen Modul LMS</h4>
+                                  </div>
+                                  <div className="space-y-4">
+                                    {(p.modules || []).map((m, idx) => (
+                                      <div key={idx} className="flex gap-4 items-start bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                          <div className="flex-1">
+                                            <p className="font-bold text-sm">{m.title}</p>
+                                            <p className="text-xs text-gray-400 line-clamp-1">{m.content}</p>
+                                          </div>
+                                          <button onClick={async () => {
+                                            const newModules = (p.modules || []).filter((_, i) => i !== idx);
+                                            await updateDoc(doc(db, 'products', p.id), { modules: newModules });
+                                            fetchProducts();
+                                          }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                                      </div>
+                                    ))}
+                                    <AddModuleForm onAdd={async (title, content) => {
+                                        const newModules = [...(p.modules || []), { id: Date.now().toString(), title, content }];
+                                        await updateDoc(doc(db, 'products', p.id), { modules: newModules });
+                                        fetchProducts();
+                                    }} />
+                                  </div>
+                              </div>
+
+                              <div className="space-y-6 border-t lg:border-t-0 lg:border-l lg:pl-12 border-gray-200">
+                                  <div className="flex items-center gap-2">
+                                    <Tag size={18} className="text-gray-400" />
+                                    <h4 className="font-bold text-gray-700">Varian Produk</h4>
+                                  </div>
+                                  <div className="space-y-4">
+                                    {(p.variants || []).map((v, idx) => (
+                                      <div key={idx} className="flex gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                          <div className="flex-1">
+                                            <p className="font-bold text-sm">{v.name}</p>
+                                            <div className="flex gap-3 mt-1">
+                                              {v.sku && <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded text-gray-500 font-mono">SKU: {v.sku}</span>}
+                                              {v.price && <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded text-indigo-600 font-bold">Rp {v.price.toLocaleString('id-ID')}</span>}
+                                            </div>
+                                          </div>
+                                          <button onClick={async () => {
+                                            const newVariants = (p.variants || []).filter((_, i) => i !== idx);
+                                            await updateDoc(doc(db, 'products', p.id), { variants: newVariants });
+                                            fetchProducts();
+                                          }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                                      </div>
+                                    ))}
+                                    <AddVariantForm onAdd={async (name, price, sku) => {
+                                        const newVariants = [...(p.variants || []), { id: Date.now().toString(), name, price, sku }];
+                                        await updateDoc(doc(db, 'products', p.id), { variants: newVariants });
+                                        fetchProducts();
+                                    }} />
+                                  </div>
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -610,6 +728,139 @@ export default function AdminDashboard() {
              </div>
            </div>
         </div>
+      ) : activeSubTab === 'events' ? (
+        <div className="space-y-8">
+           <div className="bg-white p-10 rounded-[2.5rem] border border-gray-100 space-y-8">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
+                  <Zap size={24} />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold">Event Promosi Global</h2>
+                  <p className="text-sm text-gray-500">Atur diskon otomatis untuk semua produk sekaligus.</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleUpdateGlobalConfig} className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                 <div className="space-y-6 p-8 bg-gray-50 rounded-[2rem] border border-gray-100">
+                    <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-2">
+                          <Calendar size={18} className="text-indigo-600" />
+                          <h3 className="font-bold text-gray-900">Pengaturan Diskon</h3>
+                       </div>
+                       <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={newPromo.promoActive}
+                            onChange={e => setNewPromo({...newPromo, promoActive: e.target.checked})}
+                            className="sr-only peer" 
+                          />
+                          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                       </label>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-400 uppercase">Besar Diskon (%)</label>
+                          <input 
+                            type="number"
+                            value={newPromo.promoDiscount}
+                            onChange={e => setNewPromo({...newPromo, promoDiscount: parseInt(e.target.value)})}
+                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                          />
+                       </div>
+                       <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                             <label className="text-xs font-bold text-gray-400 uppercase">Mulai</label>
+                             <input 
+                               type="datetime-local"
+                               value={newPromo.promoStart}
+                               onChange={e => setNewPromo({...newPromo, promoStart: e.target.value})}
+                               className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                             />
+                          </div>
+                          <div className="space-y-1">
+                             <label className="text-xs font-bold text-gray-400 uppercase">Berakhir</label>
+                             <input 
+                               type="datetime-local"
+                               value={newPromo.promoEnd}
+                               onChange={e => setNewPromo({...newPromo, promoEnd: e.target.value})}
+                               className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                             />
+                          </div>
+                       </div>
+                       {newPromo.promoActive && (
+                         <div className="flex items-center gap-2 p-3 bg-indigo-50 rounded-xl text-indigo-700 text-[10px] font-bold">
+                            <AlertCircle size={14} />
+                            Diskon ini akan otomatis memotong harga di seluruh katalog.
+                         </div>
+                       )}
+                    </div>
+                 </div>
+
+                 <div className="space-y-6 p-8 bg-gray-50 rounded-[2rem] border border-gray-100">
+                    <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-2">
+                          <Globe size={18} className="text-indigo-600" />
+                          <h3 className="font-bold text-gray-900">Geo-Pricing (Algoritma Harga)</h3>
+                       </div>
+                       <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={newPromo.geoPricingActive}
+                            onChange={e => setNewPromo({...newPromo, geoPricingActive: e.target.checked})}
+                            className="sr-only peer" 
+                          />
+                          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                       </label>
+                    </div>
+
+                    <div className="space-y-4">
+                       <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-400 uppercase">Multiplier Indonesia (IDR)</label>
+                          <input 
+                            type="number"
+                            step="0.1"
+                            value={newPromo.idrMultiplier}
+                            onChange={e => setNewPromo({...newPromo, idrMultiplier: parseFloat(e.target.value)})}
+                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                          />
+                       </div>
+                       <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-400 uppercase">Multiplier Luar Negeri</label>
+                          <input 
+                            type="number"
+                            step="0.1"
+                            value={newPromo.foreignMultiplier}
+                            onChange={e => setNewPromo({...newPromo, foreignMultiplier: parseFloat(e.target.value)})}
+                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                          />
+                       </div>
+                       <div className="p-4 bg-white rounded-2xl border border-gray-100 space-y-2">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Simulasi Harga</p>
+                          <div className="flex justify-between items-center text-xs">
+                             <span className="text-gray-500">Base Price (100k)</span>
+                             <span className="font-bold">Rp 100.000</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs text-indigo-600 font-bold">
+                             <span>Harga Lokal</span>
+                             <span>Rp {(100000 * newPromo.idrMultiplier).toLocaleString('id-ID')}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs text-amber-600 font-bold">
+                             <span>Harga Asing</span>
+                             <span>Rp {(100000 * newPromo.foreignMultiplier).toLocaleString('id-ID')}</span>
+                          </div>
+                       </div>
+                    </div>
+                 </div>
+
+                 <button type="submit" className="md:col-span-2 py-5 bg-gray-900 text-white rounded-[1.5rem] font-bold text-lg shadow-xl shadow-gray-200 hover:bg-indigo-600 transition-all flex items-center justify-center gap-3">
+                    <CheckCircle2 size={24} />
+                    Simpan Perubahan Global
+                 </button>
+              </form>
+           </div>
+        </div>
       ) : (
         /* Withdrawal Management View */
         <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden">
@@ -642,7 +893,7 @@ export default function AdminDashboard() {
                     <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-8 py-4">
                         <p className="font-bold text-gray-900">{w.userName}</p>
-                        <p className="text-[10px] text-gray-400 uppercase">{new Date(w.createdAt).toLocaleDateString('id-ID')}</p>
+                        <p className="text-[10px] text-gray-400 uppercase font-medium">{new Date(w.createdAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'})}</p>
                       </td>
                       <td className="px-8 py-4 text-right text-sm text-gray-500">{w.userEmail}</td>
                       <td className="px-8 py-4 text-center">
@@ -651,14 +902,19 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-8 py-4 font-black text-indigo-600">Rp {w.amount.toLocaleString('id-ID')}</td>
                       <td className="px-8 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          w.status === 'pending' ? 'bg-amber-100 text-amber-700' : 
-                          w.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                          w.status === 'approved' ? 'bg-blue-100 text-blue-700' : 
-                          'bg-red-100 text-red-700'
-                        }`}>
-                          {w.status}
-                        </span>
+                        <div className="space-y-1">
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            w.status === 'pending' ? 'bg-amber-100 text-amber-700' : 
+                            w.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                            w.status === 'approved' ? 'bg-blue-100 text-blue-700' : 
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            {w.status}
+                          </span>
+                          {w.processedAt && (
+                            <p className="text-[10px] text-gray-400 font-medium">Proc: {new Date(w.processedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'})}</p>
+                          )}
+                        </div>
                       </td>
                       <td className="px-8 py-4">
                         <div className="flex gap-2 justify-end">
