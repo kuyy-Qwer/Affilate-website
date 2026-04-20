@@ -41,20 +41,19 @@ const logActivity = async (action: string, details: string, req: AuthenticatedRe
 
 
 // Initialize Firebase Admin
-// Credentials are read from the SERVICE_ACCOUNT_KEY environment variable (JSON string).
-// For local development, fall back to serviceAccountKey.json if the env var is not set.
+// Credentials must be provided via the SERVICE_ACCOUNT_KEY environment variable (JSON string).
+// In Railway: set SERVICE_ACCOUNT_KEY to the contents of your Firebase service account JSON file.
 if (!admin.apps.length) {
   const serviceAccountJson = process.env.SERVICE_ACCOUNT_KEY;
-  let serviceAccountCredential: admin.ServiceAccount;
 
-  if (serviceAccountJson) {
-    // Production / Railway: parse credentials from environment variable
-    serviceAccountCredential = JSON.parse(serviceAccountJson) as admin.ServiceAccount;
-  } else {
-    // Local development: load credentials from file at runtime (not a static import)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    serviceAccountCredential = require('./serviceAccountKey.json') as admin.ServiceAccount;
+  if (!serviceAccountJson) {
+    throw new Error(
+      'Missing SERVICE_ACCOUNT_KEY environment variable. ' +
+      'Please set it in your Railway project variables with the contents of your Firebase service account JSON file.'
+    );
   }
+
+  const serviceAccountCredential = JSON.parse(serviceAccountJson) as admin.ServiceAccount;
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccountCredential),
