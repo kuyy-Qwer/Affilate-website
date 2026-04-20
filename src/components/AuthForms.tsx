@@ -114,6 +114,7 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [registered, setRegistered] = useState(false);
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
@@ -150,13 +151,35 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         totalClicks: 0,
         createdAt: new Date().toISOString()
       });
-      onSuccess();
+      setRegistered(true);
     } catch (err: any) {
       setError(err.message || 'Gagal mendaftar');
     } finally {
       setLoading(false);
     }
   };
+
+  if (registered) {
+    return (
+      <div className="text-center space-y-6 py-4">
+        <div className="p-4 bg-green-50 rounded-2xl text-green-600 flex justify-center mx-auto w-16 h-16 items-center">
+          <Mail size={32} />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-xl font-bold">Cek Email Anda</h3>
+          <p className="text-sm text-gray-500">
+            Link verifikasi telah dikirim ke email Anda. Silakan verifikasi sebelum masuk ke dashboard.
+          </p>
+        </div>
+        <button 
+          onClick={onSuccess}
+          className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all"
+        >
+          Lanjut ke Beranda
+        </button>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 w-full max-w-sm">

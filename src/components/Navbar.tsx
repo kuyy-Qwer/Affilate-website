@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShoppingBag, Users, LayoutDashboard, LogIn, UserPlus, Menu, X, Heart } from 'lucide-react';
+import { ShoppingBag, Users, LayoutDashboard, LogIn, UserPlus, Menu, X, Heart, LogOut, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../types';
 
@@ -7,9 +7,10 @@ interface NavbarProps {
   user: User | null;
   onNavigate: (tab: any) => void;
   activeTab: string;
+  onLogout: () => void;
 }
 
-export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
+export default function Navbar({ user, onNavigate, activeTab, onLogout }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const handleNavigate = (tab: any) => {
@@ -51,6 +52,14 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                   <Heart size={20} fill={activeTab === 'wishlist' ? "currentColor" : "none"} />
                 </button>
                 <button 
+                  onClick={() => handleNavigate('purchases')}
+                  className={`flex items-center gap-2 text-sm font-medium transition-colors ${activeTab === 'purchases' ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-600'}`}
+                  title="Produk Saya"
+                >
+                  <Package size={18} />
+                  Produk Saya
+                </button>
+                <button 
                   id="nav-dashboard"
                   onClick={() => handleNavigate(user.role === 'admin' ? 'admin' : 'affiliate')}
                   className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-indigo-600 transition-colors"
@@ -68,6 +77,13 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                 <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-bold text-xs">
                   {user.name.charAt(0).toUpperCase()}
                 </div>
+                <button 
+                  onClick={onLogout}
+                  className="flex items-center gap-1.5 text-sm font-bold text-red-500 hover:bg-red-50 px-3 py-2 rounded-xl transition-all"
+                >
+                  <LogOut size={18} />
+                  Keluar
+                </button>
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -130,6 +146,7 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                 <MobileNavItem active={activeTab === 'home'} onClick={() => handleNavigate('home')} label="Beranda" />
                 <MobileNavItem active={activeTab === 'products'} onClick={() => handleNavigate('products')} label="Produk" />
                 {user && <MobileNavItem active={activeTab === 'wishlist'} onClick={() => handleNavigate('wishlist')} label="Wishlist" />}
+                {user && <MobileNavItem active={activeTab === 'purchases'} onClick={() => handleNavigate('purchases')} label="Produk Saya" />}
                 {user && <MobileNavItem active={activeTab === 'profile'} onClick={() => handleNavigate('profile')} label="Profil Saya" />}
                 <MobileNavItem active={activeTab === 'features'} onClick={() => handleNavigate('features')} label="Fitur" />
                 <MobileNavItem active={activeTab === 'pricing'} onClick={() => handleNavigate('pricing')} label="Paket" />
@@ -154,6 +171,13 @@ export default function Navbar({ user, onNavigate, activeTab }: NavbarProps) {
                     >
                       <LayoutDashboard size={20} />
                       Ke Dashboard
+                    </button>
+                    <button 
+                      onClick={onLogout}
+                      className="w-full flex items-center justify-center gap-2 py-4 text-red-500 font-bold border border-red-50 rounded-2xl hover:bg-red-50 transition-all"
+                    >
+                      <LogOut size={20} />
+                      Keluar
                     </button>
                   </div>
                 ) : (

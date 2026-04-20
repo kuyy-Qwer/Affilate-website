@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, setDoc } from 'firebase/firestore';
-import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig } from '../types';
-import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle } from 'lucide-react';
+import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig, Sale } from '../types';
+import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => void }) {
@@ -73,12 +73,14 @@ function AddVariantForm({ onAdd }: { onAdd: (name: string, price?: number, sku?:
 
 export default function AdminDashboard() {
   const { getAuthHeaders, globalConfig, fetchGlobalConfig } = useStore();
-  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events'>('products');
+  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [allSales, setAllSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
   const [editUserName, setEditUserName] = useState('');
@@ -89,7 +91,10 @@ export default function AdminDashboard() {
     description: '',
     price: 0,
     category: '',
-    image: 'https://picsum.photos/seed/tool/800/600'
+    image: 'https://picsum.photos/seed/tool/800/600',
+    downloadUrl: '',
+    isSoftware: false,
+    licensePrefix: ''
   });
 
   const [newPromo, setNewPromo] = useState({
@@ -105,7 +110,9 @@ export default function AdminDashboard() {
   const [newCoupon, setNewCoupon] = useState({
     code: '',
     discountType: 'percentage' as 'percentage' | 'fixed',
-    discountValue: 0
+    discountValue: 0,
+    usageLimitPerUser: 1,
+    expiryDate: ''
   });
 
   useEffect(() => {
@@ -124,17 +131,42 @@ export default function AdminDashboard() {
 
   const handleUpdateGlobalConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveStatus('saving');
     try {
-      await setDoc(doc(db, 'settings', 'global'), {
-        ...newPromo,
-        id: 'global'
+      const resp = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify(newPromo)
       });
-      alert('Konfigurasi Global Diperbarui!');
-      fetchGlobalConfig();
+      if (resp.ok) {
+        setSaveStatus('success');
+        fetchGlobalConfig();
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      } else {
+        const err = await resp.json();
+        setSaveStatus('error');
+        alert('Gagal: ' + (err.error || 'Server error'));
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      }
     } catch (err) {
+      setSaveStatus('error');
       alert('Gagal memperbarui konfigurasi');
+      setTimeout(() => setSaveStatus('idle'), 3000);
     }
   };
+
+  const hasGlobalChanges = useMemo(() => {
+    if (!globalConfig) return false;
+    return (
+      newPromo.promoActive !== globalConfig.promoActive ||
+      newPromo.promoDiscount !== globalConfig.promoDiscount ||
+      newPromo.promoStart !== globalConfig.promoStart ||
+      newPromo.promoEnd !== globalConfig.promoEnd ||
+      newPromo.geoPricingActive !== globalConfig.geoPricingActive ||
+      newPromo.idrMultiplier !== globalConfig.idrMultiplier ||
+      newPromo.foreignMultiplier !== globalConfig.foreignMultiplier
+    );
+  }, [newPromo, globalConfig]);
   
   const fetchProducts = async () => {
     try {
@@ -181,10 +213,22 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchAllSales = async () => {
+    try {
+      const resp = await fetch('/api/admin/sales', {
+        headers: await getAuthHeaders()
+      });
+      const data = await resp.json();
+      setAllSales(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchProducts(), fetchUsers(), fetchCoupons(), fetchWithdrawals(), fetchGlobalConfig()]);
+      await Promise.all([fetchProducts(), fetchUsers(), fetchCoupons(), fetchWithdrawals(), fetchGlobalConfig(), fetchAllSales()]);
       setLoading(false);
     };
     init();
@@ -192,17 +236,44 @@ export default function AdminDashboard() {
 
   const handleAddCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCoupon.code || newCoupon.discountValue <= 0) return;
+    
+    // Validasi Client-side
+    if (!newCoupon.code) {
+      alert('Kode kupon harus diisi');
+      return;
+    }
+    if (newCoupon.discountValue <= 0) {
+      alert('Nilai diskon harus lebih besar dari 0');
+      return;
+    }
+    if (newCoupon.expiryDate) {
+      const expiry = new Date(newCoupon.expiryDate);
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      if (expiry < today) {
+        alert('Tanggal kedaluwarsa tidak boleh di masa lalu');
+        return;
+      }
+    }
+
     try {
-      await addDoc(collection(db, 'coupons'), {
-        ...newCoupon,
-        code: newCoupon.code.toUpperCase(),
-        isActive: true,
-        usageCount: 0,
-        createdAt: new Date().toISOString()
+      const resp = await fetch('/api/admin/coupons', {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          ...newCoupon,
+          code: newCoupon.code.toUpperCase(),
+          isActive: true,
+          usageCount: 0
+        })
       });
-      setNewCoupon({ code: '', discountType: 'percentage', discountValue: 0 });
-      fetchCoupons();
+      if (resp.ok) {
+        setNewCoupon({ code: '', discountType: 'percentage', discountValue: 0, usageLimitPerUser: 1, expiryDate: '' });
+        fetchCoupons();
+      } else {
+        const err = await resp.json();
+        alert('Gagal: ' + (err.error || 'Server error'));
+      }
     } catch (err) {
       alert('Gagal menambah kupon');
     }
@@ -211,8 +282,16 @@ export default function AdminDashboard() {
   const handleDeleteCoupon = async (id: string) => {
     if (!confirm('Hapus kupon ini?')) return;
     try {
-      await deleteDoc(doc(db, 'coupons', id));
-      fetchCoupons();
+      const resp = await fetch(`/api/admin/coupons/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      });
+      if (resp.ok) {
+        fetchCoupons();
+      } else {
+        const err = await resp.json();
+        alert('Gagal: ' + (err.error || 'Server error'));
+      }
     } catch (err) {
       alert('Gagal menghapus');
     }
@@ -221,11 +300,17 @@ export default function AdminDashboard() {
   const handleProcessWithdrawal = async (withdrawal: WithdrawalRequest, status: 'approved' | 'rejected' | 'completed') => {
     if (!confirm(`Ubah status permintaan ini menjadi ${status}?`)) return;
     try {
-      await updateDoc(doc(db, 'withdrawals', withdrawal.id), {
-        status,
-        processedAt: new Date().toISOString()
+      const resp = await fetch(`/api/admin/withdrawals/${withdrawal.id}/process`, {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({ status })
       });
-      fetchWithdrawals();
+      if (resp.ok) {
+        fetchWithdrawals();
+      } else {
+        const err = await resp.json();
+        alert('Gagal: ' + (err.error || 'Server error'));
+      }
     } catch (err) {
       alert('Gagal memproses permintaan');
     }
@@ -280,13 +365,21 @@ export default function AdminDashboard() {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'products'), {
-        ...newProduct,
-        modules: [],
-        createdAt: new Date().toISOString()
+      const resp = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          ...newProduct,
+          modules: []
+        })
       });
-      setNewProduct({ name: '', description: '', price: 0, category: '', image: 'https://picsum.photos/seed/tool/800/600' });
-      fetchProducts();
+      if (resp.ok) {
+        setNewProduct({ name: '', description: '', price: 0, category: '', image: 'https://picsum.photos/seed/tool/800/600', downloadUrl: '', isSoftware: false, licensePrefix: '' });
+        fetchProducts();
+      } else {
+        const err = await resp.json();
+        alert('Gagal: ' + (err.error || 'Server error'));
+      }
     } catch (err) {
       alert('Gagal menambah produk: ' + (err as Error).message);
     }
@@ -295,8 +388,16 @@ export default function AdminDashboard() {
   const handleDelete = async (id: string) => {
     if (!confirm('Hapus produk ini?')) return;
     try {
-      await deleteDoc(doc(db, 'products', id));
-      fetchProducts();
+      const resp = await fetch(`/api/admin/products/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      });
+      if (resp.ok) {
+        fetchProducts();
+      } else {
+        const err = await resp.json();
+        alert('Gagal: ' + (err.error || 'Server error'));
+      }
     } catch (err) {
       alert('Gagal menghapus');
     }
@@ -305,60 +406,70 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-12">
       {/* Tab Switcher */}
-      <div className="flex gap-4 p-1 bg-gray-100 rounded-2xl w-fit">
-        <button 
-          onClick={() => setActiveSubTab('products')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
-            activeSubTab === 'products' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Package size={18} /> Produk
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('users')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
-            activeSubTab === 'users' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users size={18} /> Pengguna
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('coupons')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
-            activeSubTab === 'coupons' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Ticket size={18} /> Kupon
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('withdrawals')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
-            activeSubTab === 'withdrawals' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Wallet size={18} /> Pencairan
-        </button>
-        <button 
-          onClick={() => setActiveSubTab('events')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all ${
-            activeSubTab === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Zap size={18} /> Event & Geo
-        </button>
+      <div className="overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 scrollbar-hide">
+        <div className="flex gap-2 md:gap-4 p-1 bg-gray-100 rounded-2xl w-fit whitespace-nowrap">
+          <button 
+            onClick={() => setActiveSubTab('products')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'products' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Package size={16} className="md:w-[18px] md:h-[18px]" /> Produk
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('users')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'users' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Users size={16} className="md:w-[18px] md:h-[18px]" /> Pengguna
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('coupons')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'coupons' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Ticket size={16} className="md:w-[18px] md:h-[18px]" /> Kupon
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('withdrawals')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'withdrawals' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Wallet size={16} className="md:w-[18px] md:h-[18px]" /> Pencairan
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('events')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Zap size={16} className="md:w-[18px] md:h-[18px]" /> Event
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('sales')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'sales' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <ShoppingBag size={16} className="md:w-[18px] md:h-[18px]" /> Penjualan
+          </button>
+        </div>
       </div>
 
       {activeSubTab === 'products' ? (
         <>
-          <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100">
-            <div className="flex items-center gap-3 mb-8">
+          <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-3 mb-6 md:mb-8">
               <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
                 <Plus size={24} />
               </div>
-              <h2 className="text-2xl font-bold">Tambah Produk Baru</h2>
+              <h2 className="text-xl md:text-2xl font-bold">Tambah Produk Baru</h2>
             </div>
             
-            <form onSubmit={handleAddProduct} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <form onSubmit={handleAddProduct} className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               <div className="space-y-1">
                 <label className="text-sm font-semibold text-gray-700">Nama Produk</label>
                 <input 
@@ -396,6 +507,41 @@ export default function AdminDashboard() {
                   onChange={e => setNewProduct({...newProduct, image: e.target.value})}
                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" 
                 />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-gray-700">Download URL (PDF/ZIP)</label>
+                <input 
+                  value={newProduct.downloadUrl}
+                  onChange={e => setNewProduct({...newProduct, downloadUrl: e.target.value})}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" 
+                  placeholder="URL File Digital..." 
+                />
+              </div>
+              <div className="space-y-4 md:col-span-2 bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 mt-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-indigo-900 text-sm">Software / License System</h4>
+                    <p className="text-xs text-indigo-600">Aktifkan untuk menggenerate license key unik setiap penjualan.</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setNewProduct({...newProduct, isSoftware: !newProduct.isSoftware})}
+                    className={`w-12 h-6 rounded-full transition-all relative ${newProduct.isSoftware ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${newProduct.isSoftware ? 'right-1' : 'left-1'}`} />
+                  </button>
+                </div>
+                {newProduct.isSoftware && (
+                  <div className="space-y-1">
+                    <label className="text-sm font-semibold text-indigo-900">Prefix Lisensi (Opsional)</label>
+                    <input 
+                      value={newProduct.licensePrefix}
+                      onChange={e => setNewProduct({...newProduct, licensePrefix: e.target.value})}
+                      className="w-full px-4 py-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" 
+                      placeholder="Contoh: WIN, SOFT, ACC..." 
+                    />
+                  </div>
+                )}
               </div>
               <div className="space-y-1 md:col-span-2">
                 <label className="text-sm font-semibold text-gray-700">Deskripsi</label>
@@ -486,7 +632,60 @@ export default function AdminDashboard() {
                               </div>
 
                               <div className="space-y-6 border-t lg:border-t-0 lg:border-l lg:pl-12 border-gray-200">
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <Zap size={18} className="text-gray-400" />
+                                      <h4 className="font-bold text-gray-700">Digital Delivery</h4>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-bold text-gray-500">Software?</span>
+                                      <button 
+                                        onClick={async () => {
+                                          await updateDoc(doc(db, 'products', p.id), { isSoftware: !p.isSoftware });
+                                          fetchProducts();
+                                        }}
+                                        className={`w-10 h-5 rounded-full transition-colors relative ${p.isSoftware ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                                      >
+                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${p.isSoftware ? 'left-6' : 'left-1'}`} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-4">
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase text-gray-400">Download URL</label>
+                                        <div className="flex gap-2">
+                                          <input 
+                                            defaultValue={p.downloadUrl || ''}
+                                            onBlur={async (e) => {
+                                              if (e.target.value !== (p.downloadUrl || '')) {
+                                                await updateDoc(doc(db, 'products', p.id), { downloadUrl: e.target.value });
+                                                fetchProducts();
+                                              }
+                                            }}
+                                            placeholder="https://example.com/file.zip"
+                                            className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
+                                          />
+                                        </div>
+                                      </div>
+                                      {p.isSoftware && (
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-black uppercase text-gray-400">License Prefix</label>
+                                          <input 
+                                            defaultValue={p.licensePrefix || ''}
+                                            onBlur={async (e) => {
+                                              if (e.target.value !== (p.licensePrefix || '')) {
+                                                await updateDoc(doc(db, 'products', p.id), { licensePrefix: e.target.value });
+                                                fetchProducts();
+                                              }
+                                            }}
+                                            placeholder="E.g. DIGI-PRO-"
+                                            className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
+                                          />
+                                        </div>
+                                      )}
+                                  </div>
+                                  
+                                  <div className="flex items-center gap-2 pt-4">
                                     <Tag size={18} className="text-gray-400" />
                                     <h4 className="font-bold text-gray-700">Varian Produk</h4>
                                   </div>
@@ -569,14 +768,25 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-8 py-4">
                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                          u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
+                          u.role === 'affiliate' ? 'bg-blue-100 text-blue-700' : 
+                          'bg-gray-100 text-gray-700'
                         }`}>
                           {u.role}
                         </span>
                       </td>
                       <td className="px-8 py-4 font-mono text-xs text-gray-400">{u.referralCode || '-'}</td>
                       <td className="px-8 py-4">
-                        <div className="flex gap-2 justify-end">
+                        <div className="flex gap-2 justify-end items-center">
+                          <select 
+                            value={u.role}
+                            onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                            className="text-[10px] font-bold uppercase py-1 px-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                          >
+                            <option value="customer">Customer</option>
+                            <option value="affiliate">Affiliate</option>
+                            <option value="admin">Admin</option>
+                          </select>
                           <button 
                             onClick={() => {
                               setUserEditingId(userEditingId === u.id ? null : u.id);
@@ -587,21 +797,6 @@ export default function AdminDashboard() {
                           >
                             <UserCog size={18} />
                           </button>
-                          {u.role === 'admin' ? (
-                            <button 
-                              onClick={() => handleUpdateRole(u.id, 'affiliate')}
-                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg flex items-center gap-2 text-xs font-bold"
-                            >
-                              <Users size={16} /> Demote
-                            </button>
-                          ) : (
-                            <button 
-                              onClick={() => handleUpdateRole(u.id, 'admin')}
-                              className="p-2 text-purple-500 hover:bg-purple-50 rounded-lg flex items-center gap-2 text-xs font-bold"
-                            >
-                              <Shield size={16} /> Promote
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -647,7 +842,7 @@ export default function AdminDashboard() {
                </div>
                <h2 className="text-2xl font-bold">Buat Kupon Baru</h2>
              </div>
-             <form onSubmit={handleAddCoupon} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+             <form onSubmit={handleAddCoupon} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700">Kode Kupon</label>
                   <input 
@@ -679,9 +874,31 @@ export default function AdminDashboard() {
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-                <button type="submit" className="md:col-span-3 py-4 bg-gray-900 text-white rounded-2xl font-bold hover:bg-indigo-600 transition-all">
-                  Simpan Kupon
-                </button>
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700">Limit per Pengguna</label>
+                  <input 
+                    type="number"
+                    min="1"
+                    value={newCoupon.usageLimitPerUser}
+                    onChange={e => setNewCoupon({...newCoupon, usageLimitPerUser: parseInt(e.target.value)})}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700">Tanggal Kedaluwarsa</label>
+                  <input 
+                    type="date"
+                    min={new Date().toISOString().split('T')[0]}
+                    value={newCoupon.expiryDate}
+                    onChange={e => setNewCoupon({...newCoupon, expiryDate: e.target.value})}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="md:col-span-2 lg:col-span-1 flex items-end">
+                  <button type="submit" className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold hover:bg-indigo-600 transition-all">
+                    Simpan Kupon
+                  </button>
+                </div>
              </form>
            </div>
 
@@ -699,7 +916,8 @@ export default function AdminDashboard() {
                       <th className="px-8 py-4">Kode</th>
                       <th className="px-8 py-4">Tipe</th>
                       <th className="px-8 py-4">Nilai</th>
-                      <th className="px-8 py-4">Digunakan</th>
+                      <th className="px-8 py-4">Limit (User)</th>
+                      <th className="px-8 py-4">Kedaluwarsa</th>
                       <th className="px-8 py-4">Status</th>
                       <th className="px-8 py-4">Aksi</th>
                     </tr>
@@ -707,16 +925,20 @@ export default function AdminDashboard() {
                   <tbody className="divide-y divide-gray-100">
                     {coupons.map(c => (
                       <tr key={c.id}>
-                        <td className="px-8 py-4 font-bold text-gray-900">{c.code}</td>
+                        <td className="px-8 py-4">
+                           <span className="font-bold text-gray-900 block">{c.code}</span>
+                           <span className="text-[10px] text-gray-400 tracking-tighter uppercase">{c.usageCount} digunakan secara total</span>
+                        </td>
                         <td className="px-8 py-4 text-sm text-gray-500 uppercase">{c.discountType === 'fixed' ? 'Nominal' : 'Persen'}</td>
                         <td className="px-8 py-4 font-bold text-indigo-600">{c.discountType === 'percentage' ? `${c.discountValue}%` : `Rp ${c.discountValue.toLocaleString('id-ID')}`}</td>
-                        <td className="px-8 py-4 text-sm text-gray-500">{c.usageCount} kali</td>
-                        <td className="px-8 py-4">
+                        <td className="px-8 py-4 text-sm text-gray-700">{c.usageLimitPerUser || '∞'} kali</td>
+                        <td className="px-8 py-4 text-sm text-gray-700">{c.expiryDate ? new Date(c.expiryDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tidak ada'}</td>
+                        <td className="px-8 py-4 text-center">
                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                              c.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                            }`}>{c.isActive ? 'Aktif' : 'Nonaktif'}</span>
                         </td>
-                        <td className="px-8 py-4">
+                        <td className="px-8 py-4 text-right">
                            <button onClick={() => handleDeleteCoupon(c.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
                               <Trash2 size={18} />
                            </button>
@@ -854,9 +1076,27 @@ export default function AdminDashboard() {
                     </div>
                  </div>
 
-                 <button type="submit" className="md:col-span-2 py-5 bg-gray-900 text-white rounded-[1.5rem] font-bold text-lg shadow-xl shadow-gray-200 hover:bg-indigo-600 transition-all flex items-center justify-center gap-3">
-                    <CheckCircle2 size={24} />
-                    Simpan Perubahan Global
+                 <button 
+                   type="submit" 
+                   disabled={!hasGlobalChanges || saveStatus === 'saving'}
+                   className={`md:col-span-2 py-5 rounded-[1.5rem] font-bold text-lg shadow-xl shadow-gray-200 transition-all flex items-center justify-center gap-3 ${
+                     !hasGlobalChanges ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none' : 
+                     saveStatus === 'success' ? 'bg-green-500 text-white' :
+                     saveStatus === 'error' ? 'bg-red-500 text-white' :
+                     'bg-gray-900 text-white hover:bg-indigo-600'
+                   }`}
+                 >
+                    {saveStatus === 'saving' ? (
+                      <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    ) : saveStatus === 'success' ? (
+                      <CheckCircle2 size={24} />
+                    ) : (
+                      <Zap size={24} />
+                    )}
+                    {saveStatus === 'saving' ? 'Menyimpan...' : 
+                     saveStatus === 'success' ? 'Perubahan Berhasil Disimpan!' : 
+                     saveStatus === 'error' ? 'Gagal Menyimpan' :
+                     !hasGlobalChanges ? 'Tidak Ada Perubahan' : 'Simpan Perubahan Global'}
                  </button>
               </form>
            </div>
@@ -949,6 +1189,68 @@ export default function AdminDashboard() {
                     </tr>
                   ))
                 )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'sales' && (
+        <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm">
+          <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+             <div>
+                <h3 className="text-xl font-bold">Semua Transaksi</h3>
+                <p className="text-sm text-gray-500 font-medium">Total {allSales.length} transaksi berhasil.</p>
+             </div>
+             <div className="flex items-center gap-4">
+                <div className="bg-white border border-gray-200 px-4 py-2 rounded-xl flex items-center gap-2">
+                   <Search size={16} className="text-gray-400" />
+                   <input placeholder="Cari Buyer..." className="bg-transparent outline-none text-sm font-medium" />
+                </div>
+             </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-gray-50/50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  <th className="px-8 py-4">ID / Tanggal</th>
+                  <th className="px-8 py-4">Produk</th>
+                  <th className="px-8 py-4">Pembeli</th>
+                  <th className="px-8 py-4">Afiliasi / Komisi</th>
+                  <th className="px-8 py-4">Total Bayar</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {allSales.map((s) => (
+                  <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors">
+                    <td className="px-8 py-6">
+                      <p className="font-mono text-[10px] text-gray-400 mb-1">{s.id.slice(0, 12)}...</p>
+                      <p className="text-xs font-bold text-gray-600">{new Date(s.createdAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'})}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                       <p className="font-black text-gray-900">{s.productName}</p>
+                       <p className="text-[10px] uppercase font-bold text-gray-400 tracking-tighter">ID: {s.productId}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                       <p className="font-bold text-gray-800 text-sm">{s.buyerEmail}</p>
+                       <p className="text-[10px] font-medium text-gray-400">UID: {s.buyerId.slice(0, 8)}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                       {s.affiliateId ? (
+                         <div className="space-y-1">
+                           <p className="text-xs font-bold text-indigo-600">Rp {s.commission.toLocaleString('id-ID')}</p>
+                           <p className="text-[10px] text-gray-400 font-medium">Affiliate: {s.affiliateId.slice(0, 8)}</p>
+                         </div>
+                       ) : (
+                         <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">Langsung</span>
+                       )}
+                    </td>
+                    <td className="px-8 py-6">
+                       <p className="text-lg font-black text-indigo-600">Rp {s.amount.toLocaleString('id-ID')}</p>
+                       <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold uppercase">Lunas</span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

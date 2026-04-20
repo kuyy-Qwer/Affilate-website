@@ -43,21 +43,38 @@ service cloud.firestore {
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isSignedIn() && isValidUser(incoming()) && (incoming().role == 'customer' || incoming().role == 'affiliate');
-      allow update: if isOwner(userId) && (
-        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'referralCode'])
-      ) || isAdmin();
+      // Role updates MUST happen via server API /api/admin/update-role
+      allow update: if (isOwner(userId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'wishlist', 'country', 'isIndonesian'])
+      )) || isAdmin();
     }
 
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidProduct(incoming());
+      allow write: if false; // All product management via server API
     }
 
     match /sales/{saleId} {
+      // Users can see their own purchases or sales they referred
       allow get: if isSignedIn() && (existing().buyerId == request.auth.uid || existing().affiliateId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && (resource.data.buyerId == request.auth.uid || resource.data.affiliateId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidSale(incoming());
-      allow update, delete: if isAdmin();
+      allow write: if false; // All sales records created by Stripe Webhook (Server Admin)
+    }
+
+    match /settings/global {
+      allow read: if true;
+      allow write: if false; // Admin settings via server API
+    }
+
+    match /coupons/{couponId} {
+      allow read: if true; 
+      allow write: if false; // Coupon management via server API
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false; // Withdrawals created/processed via server API
     }
   }
 }

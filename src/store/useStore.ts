@@ -22,6 +22,7 @@ interface AppState {
   fetchGlobalConfig: () => Promise<void>;
   updateUserProfile: (data: Partial<User>) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
+  checkVerificationStatus: () => Promise<void>;
   getAuthHeaders: () => Promise<Record<string, string>>;
 }
 
@@ -120,6 +121,17 @@ export const useStore = create<AppState>((set, get) => ({
     const fbUser = auth.currentUser;
     if (fbUser) {
       await sendEmailVerification(fbUser);
+    }
+  },
+
+  checkVerificationStatus: async () => {
+    const fbUser = auth.currentUser;
+    if (fbUser) {
+      await fbUser.reload();
+      const { user } = get();
+      if (user) {
+        set({ user: { ...user, emailVerified: auth.currentUser?.emailVerified || false } });
+      }
     }
   }
 }));

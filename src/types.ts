@@ -36,6 +36,12 @@ export interface Product {
   category: string;
   modules?: ProductModule[];
   variants?: ProductVariant[];
+  averageRating?: number;
+  reviewCount?: number;
+  // Digital Delivery
+  downloadUrl?: string;
+  isSoftware?: boolean;
+  licensePrefix?: string;
   createdAt: any;
 }
 
@@ -54,6 +60,7 @@ export interface User {
   referralCode?: string;
   referredBy?: string;
   wishlist?: string[];
+  purchasedProducts?: string[];
   commissionEarned?: number;
   totalSales?: number;
   totalClicks?: number;
@@ -69,6 +76,8 @@ export interface Coupon {
   discountValue: number;
   isActive: boolean;
   usageCount: number;
+  usageLimitPerUser?: number;
+  expiryDate?: string;
   createdAt: string;
 }
 
@@ -91,8 +100,25 @@ export interface Sale {
   productName: string;
   buyerId: string;
   buyerEmail: string;
-  affiliateId: string;
+  affiliateId: string | null;
   commission: number;
   amount: number;
+  couponId?: string | null;
+  paymentStatus: 'pending' | 'completed' | 'failed';
+  stripeSessionId?: string;
+  // Digital Delivery
+  licenseKey?: string;
+  downloadToken?: string;
+  downloadExpiresAt?: string;
+  createdAt: string;
+}
+
+export interface Review {
+  id: string;
+  productId: string;
+  userId: string;
+  userName: string;
+  rating: number; // 1-5
+  comment: string;
   createdAt: string;
 }
