@@ -7,6 +7,7 @@ import { z } from 'zod';
 import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import serviceAccount from './serviceAccountKey.json';
 
 // --- Utilities ---
 const generateLicenseKey = (prefix: string = 'DS') => {
@@ -19,10 +20,11 @@ const generateLicenseKey = (prefix: string = 'DS') => {
 
 const generateSecureToken = () => crypto.randomBytes(32).toString('hex');
 
+
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.applicationDefault(), 
+    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount), 
     projectId: firebaseConfig.projectId
   });
 }
