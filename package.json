@@ -6,11 +6,9 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "build:server": "tsc --project tsconfig.server.json",
-    "build:all": "npm run build && npm run build:server",
-    "start": "node dist-server/server.js",
+    "start": "tsx server.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist dist-server",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -37,6 +35,8 @@
     "react-router-dom": "^6.30.3",
     "recharts": "^3.8.1",
     "stripe": "^22.0.2",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^1.2.0",
     "zod": "^4.3.6",
@@ -48,9 +48,6 @@
     "@types/nodemailer": "^8.0.0",
     "@types/papaparse": "^5.5.2",
     "autoprefixer": "^10.4.21",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "tailwindcss": "^4.1.14"
   }
 }
