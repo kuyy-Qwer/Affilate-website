@@ -2,8 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, setDoc } from 'firebase/firestore';
 import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig, Sale } from '../types';
-import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search } from 'lucide-react';
+import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search, History, FileUp } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import Papa from 'papaparse';
+import UserAccessManager from './UserAccessManager';
+
 
 function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => void }) {
   const [title, setTitle] = useState('');
@@ -71,9 +74,10 @@ function AddVariantForm({ onAdd }: { onAdd: (name: string, price?: number, sku?:
   );
 }
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab?: 'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales' | 'logs' }) {
   const { getAuthHeaders, globalConfig, fetchGlobalConfig } = useStore();
-  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales'>('products');
+  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales' | 'logs'>(defaultTab);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
@@ -83,6 +87,9 @@ export default function AdminDashboard() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [isBulkUploading, setIsBulkUploading] = useState(false);
+
   const [editUserName, setEditUserName] = useState('');
   const [editUserEmail, setEditUserEmail] = useState('');
   
@@ -94,8 +101,16 @@ export default function AdminDashboard() {
     image: 'https://picsum.photos/seed/tool/800/600',
     downloadUrl: '',
     isSoftware: false,
-    licensePrefix: ''
+    licensePrefix: '',
+    marketingKit: {
+      banners: [] as string[],
+      swipeFiles: [] as SwipeFile[]
+    }
   });
+
+  const [bannerInput, setBannerInput] = useState('');
+  const [newSwipe, setNewSwipe] = useState({ title: '', content: '' });
+
 
   const [newPromo, setNewPromo] = useState({
     promoActive: false,
@@ -131,6 +146,17 @@ export default function AdminDashboard() {
 
   const handleUpdateGlobalConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validation: Start Date must not be later than End Date
+    if (newPromo.promoActive && newPromo.promoStart && newPromo.promoEnd) {
+      const start = new Date(newPromo.promoStart);
+      const end = new Date(newPromo.promoEnd);
+      if (start > end) {
+        alert('Error: Tanggal mulai promo tidak boleh lebih lambat dari tanggal berakhir.');
+        return;
+      }
+    }
+
     setSaveStatus('saving');
     try {
       const resp = await fetch('/api/admin/settings', {
@@ -138,6 +164,7 @@ export default function AdminDashboard() {
         headers: await getAuthHeaders(),
         body: JSON.stringify(newPromo)
       });
+
       if (resp.ok) {
         setSaveStatus('success');
         fetchGlobalConfig();
@@ -225,14 +252,31 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchActivityLogs = async () => {
+    try {
+      const resp = await fetch('/api/admin/activity-logs', { headers: await getAuthHeaders() });
+      const data = await resp.json();
+      setActivityLogs(data);
+    } catch (err) { console.error(err); }
+  };
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchProducts(), fetchUsers(), fetchCoupons(), fetchWithdrawals(), fetchGlobalConfig(), fetchAllSales()]);
+      await Promise.all([
+        fetchProducts(), 
+        fetchUsers(), 
+        fetchCoupons(), 
+        fetchWithdrawals(), 
+        fetchGlobalConfig(), 
+        fetchAllSales(),
+        fetchActivityLogs()
+      ]);
       setLoading(false);
     };
     init();
   }, []);
+
 
   const handleAddCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -370,8 +414,13 @@ export default function AdminDashboard() {
         headers: await getAuthHeaders(),
         body: JSON.stringify({
           ...newProduct,
-          modules: []
+          modules: [],
+          marketingKit: {
+            banners: bannerInput.split(',').map(s => s.trim()).filter(s => s),
+            swipeFiles: newProduct.marketingKit?.swipeFiles || []
+          }
         })
+
       });
       if (resp.ok) {
         setNewProduct({ name: '', description: '', price: 0, category: '', image: 'https://picsum.photos/seed/tool/800/600', downloadUrl: '', isSoftware: false, licensePrefix: '' });
@@ -456,18 +505,71 @@ export default function AdminDashboard() {
           >
             <ShoppingBag size={16} className="md:w-[18px] md:h-[18px]" /> Penjualan
           </button>
+          <button 
+            onClick={() => setActiveSubTab('logs')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
+              activeSubTab === 'logs' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <History size={16} className="md:w-[18px] md:h-[18px]" /> Audit Log
+          </button>
         </div>
       </div>
+
 
       {activeSubTab === 'products' ? (
         <>
           <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-sm">
-            <div className="flex items-center gap-3 mb-6 md:mb-8">
-              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
-                <Plus size={24} />
+            <div className="flex items-center justify-between mb-6 md:mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                  <Plus size={24} />
+                </div>
+                <h2 className="text-xl md:text-2xl font-bold">Tambah Produk</h2>
               </div>
-              <h2 className="text-xl md:text-2xl font-bold">Tambah Produk Baru</h2>
+              
+              <div className="flex gap-2">
+                <label className={`flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold cursor-pointer hover:bg-gray-100 transition-all ${isBulkUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <FileUp size={18} className="text-indigo-600" />
+                  {isBulkUploading ? 'Uploading...' : 'Bulk Upload (CSV)'}
+                  <input 
+                    type="file" 
+                    accept=".csv" 
+                    className="hidden" 
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsBulkUploading(true);
+                      Papa.parse(file, {
+                        header: true,
+                        dynamicTyping: true,
+                        complete: async (results) => {
+                          try {
+                            const resp = await fetch('/api/admin/bulk-products', {
+                              method: 'POST',
+                              headers: await getAuthHeaders(),
+                              body: JSON.stringify(results.data)
+                            });
+                            if (resp.ok) {
+                              alert('Bulk upload berhasil!');
+                              fetchProducts();
+                              fetchActivityLogs();
+                            } else {
+                              alert('Gagal bulk upload: ' + (await resp.json()).error);
+                            }
+                          } catch (err) {
+                            alert('Terjadi kesalahan saat upload');
+                          } finally {
+                            setIsBulkUploading(false);
+                          }
+                        }
+                      });
+                    }}
+                  />
+                </label>
+              </div>
             </div>
+
             
             <form onSubmit={handleAddProduct} className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               <div className="space-y-1">
@@ -557,7 +659,80 @@ export default function AdminDashboard() {
                 Simpan Produk
               </button>
             </form>
+
+            <div className="mt-12 space-y-8 border-t border-gray-100 pt-10">
+               <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                    <Tag size={24} />
+                  </div>
+                  <h3 className="text-xl font-bold">Marketing Kit (Bahan Jualan)</h3>
+               </div>
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase">Banner URLs (Pisahkan dengan koma)</label>
+                      <textarea 
+                        value={bannerInput}
+                        onChange={e => setBannerInput(e.target.value)}
+                        placeholder="https://image1.jpg, https://image2.jpg"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px] text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <p className="text-xs font-bold text-gray-400 uppercase">Swipe Files (Copywriting Iklan)</p>
+                    <div className="space-y-3">
+                      {newProduct.marketingKit?.swipeFiles.map((sf, idx) => (
+                        <div key={idx} className="p-4 bg-gray-50 rounded-xl flex justify-between items-start gap-4">
+                          <div>
+                            <p className="font-bold text-sm">{sf.title}</p>
+                            <p className="text-xs text-gray-500 line-clamp-2">{sf.content}</p>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const updated = newProduct.marketingKit!.swipeFiles.filter((_, i) => i !== idx);
+                              setNewProduct({...newProduct, marketingKit: {...newProduct.marketingKit!, swipeFiles: updated}});
+                            }} 
+                            className="text-red-400 p-1"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="p-4 border-2 border-dashed border-gray-100 rounded-xl space-y-3">
+                        <input 
+                          placeholder="Judul Swipe (Contoh: Story WA)"
+                          value={newSwipe.title}
+                          onChange={e => setNewSwipe({...newSwipe, title: e.target.value})}
+                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs"
+                        />
+                        <textarea 
+                          placeholder="Konten Iklan..."
+                          value={newSwipe.content}
+                          onChange={e => setNewSwipe({...newSwipe, content: e.target.value})}
+                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs min-h-[80px]"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            if (newSwipe.title && newSwipe.content) {
+                              const updated = [...(newProduct.marketingKit?.swipeFiles || []), newSwipe];
+                              setNewProduct({...newProduct, marketingKit: {...newProduct.marketingKit!, swipeFiles: updated}});
+                              setNewSwipe({title: '', content: ''});
+                            }
+                          }}
+                          className="w-full py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold"
+                        >Tambah Swipe File</button>
+                      </div>
+                    </div>
+                  </div>
+               </div>
+            </div>
           </div>
+
 
           <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden">
             <div className="p-8 border-b border-gray-100 flex items-center justify-between">
@@ -726,113 +901,17 @@ export default function AdminDashboard() {
         </>
       ) : activeSubTab === 'users' ? (
         /* User Management View */
-        <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden">
-          <div className="p-8 border-b border-gray-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-               <Users className="text-gray-400" />
-               <h3 className="text-xl font-bold">Manajemen Pengguna</h3>
-            </div>
-            <span className="text-sm font-medium text-gray-400">{users.length} Terdaftar</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead className="bg-gray-50 text-gray-400 text-xs font-bold uppercase tracking-widest text-left">
-                <tr>
-                  <th className="px-8 py-4">User</th>
-                  <th className="px-8 py-4 text-center">Stats (Sales/Comm)</th>
-                  <th className="px-8 py-4">Status/Role</th>
-                  <th className="px-8 py-4">Referal</th>
-                  <th className="px-8 py-4 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {users.map(u => (
-                  <React.Fragment key={u.id}>
-                    <tr className="hover:bg-gray-50 transition-colors">
-                      <td className="px-8 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-bold">
-                            {u.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="font-bold text-gray-900">{u.name}</p>
-                            <p className="text-xs text-gray-500">{u.email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-4 text-center">
-                        <div className="space-y-1">
-                          <p className="text-xs font-bold text-gray-900">{u.totalSales || 0} Penjualan</p>
-                          <p className="text-[10px] text-indigo-600 font-bold">Rp {(u.commissionEarned || 0).toLocaleString('id-ID')}</p>
-                        </div>
-                      </td>
-                      <td className="px-8 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                          u.role === 'affiliate' ? 'bg-blue-100 text-blue-700' : 
-                          'bg-gray-100 text-gray-700'
-                        }`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="px-8 py-4 font-mono text-xs text-gray-400">{u.referralCode || '-'}</td>
-                      <td className="px-8 py-4">
-                        <div className="flex gap-2 justify-end items-center">
-                          <select 
-                            value={u.role}
-                            onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                            className="text-[10px] font-bold uppercase py-1 px-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                          >
-                            <option value="customer">Customer</option>
-                            <option value="affiliate">Affiliate</option>
-                            <option value="admin">Admin</option>
-                          </select>
-                          <button 
-                            onClick={() => {
-                              setUserEditingId(userEditingId === u.id ? null : u.id);
-                              setEditUserName(u.name);
-                              setEditUserEmail(u.email);
-                            }}
-                            className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                          >
-                            <UserCog size={18} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {userEditingId === u.id && (
-                      <tr className="bg-gray-50/50">
-                        <td colSpan={5} className="px-8 py-6">
-                           <form onSubmit={handleUpdateUserDetails} className="flex flex-wrap gap-4 items-end bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                              <div className="space-y-1 flex-1 min-w-[200px]">
-                                <label className="text-[10px] font-bold text-gray-400 uppercase">Nama Lengkap</label>
-                                <input 
-                                  value={editUserName}
-                                  onChange={e => setEditUserName(e.target.value)}
-                                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                              </div>
-                              <div className="space-y-1 flex-1 min-w-[200px]">
-                                <label className="text-[10px] font-bold text-gray-400 uppercase">Email Address</label>
-                                <input 
-                                  value={editUserEmail}
-                                  onChange={e => setEditUserEmail(e.target.value)}
-                                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                              </div>
-                              <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all">
-                                Simpan Perubahan
-                              </button>
-                           </form>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <UserAccessManager
+          users={users}
+          onRoleChange={handleUpdateRole}
+          onUpdateDetails={handleUpdateUserDetails}
+          userEditingId={userEditingId}
+          setUserEditingId={setUserEditingId}
+          editUserName={editUserName}
+          setEditUserName={setEditUserName}
+          editUserEmail={editUserEmail}
+          setEditUserEmail={setEditUserEmail}
+        />
       ) : activeSubTab === 'coupons' ? (
         <div className="space-y-12">
            <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100">
@@ -1203,12 +1282,25 @@ export default function AdminDashboard() {
                 <p className="text-sm text-gray-500 font-medium">Total {allSales.length} transaksi berhasil.</p>
              </div>
              <div className="flex items-center gap-4">
+                <button 
+                  onClick={async () => {
+                    if (confirm('Kirim email pengingat untuk semua checkout yang menggantung > 1 jam?')) {
+                      const resp = await fetch('/api/admin/recover-carts', { method: 'POST', headers: await getAuthHeaders() });
+                      const data = await resp.json();
+                      alert(`Berhasil mengirim ${data.recovered} email recovery.`);
+                    }
+                  }}
+                  className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-2"
+                >
+                  <AlertCircle size={14} /> Recover Abandoned Carts
+                </button>
                 <div className="bg-white border border-gray-200 px-4 py-2 rounded-xl flex items-center gap-2">
                    <Search size={16} className="text-gray-400" />
                    <input placeholder="Cari Buyer..." className="bg-transparent outline-none text-sm font-medium" />
                 </div>
              </div>
           </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
@@ -1256,6 +1348,63 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {activeSubTab === 'logs' && (
+        <div className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm">
+          <div className="p-8 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+             <div>
+                <h3 className="text-xl font-bold">Activity Logs (Audit Trail)</h3>
+                <p className="text-sm text-gray-500 font-medium">Catatan aktivitas administratif untuk keamanan internal.</p>
+             </div>
+             <button onClick={fetchActivityLogs} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all">
+                <Zap size={18} /> Refresh
+             </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  <th className="px-8 py-4">Waktu</th>
+                  <th className="px-8 py-4">Admin</th>
+                  <th className="px-8 py-4">Aksi</th>
+                  <th className="px-8 py-4">Detail</th>
+                  <th className="px-8 py-4 text-right">IP Address</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {activityLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-8 py-5 text-xs text-gray-500 whitespace-nowrap">
+                       {new Date(log.createdAt).toLocaleString('id-ID')}
+                    </td>
+                    <td className="px-8 py-5">
+                       <span className="font-bold text-gray-900">{log.adminName}</span>
+                       <p className="text-[10px] text-gray-400">ID: {log.adminId.slice(0, 8)}</p>
+                    </td>
+                    <td className="px-8 py-5">
+                       <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${
+                         log.action.includes('DELETE') ? 'bg-red-100 text-red-600' :
+                         log.action.includes('ADD') ? 'bg-green-100 text-green-600' :
+                         'bg-blue-100 text-blue-600'
+                       }`}>
+                         {log.action}
+                       </span>
+                    </td>
+                    <td className="px-8 py-5 text-sm text-gray-600">{log.details}</td>
+                    <td className="px-8 py-5 text-xs text-gray-400 text-right font-mono">{log.ip || 'Unknown'}</td>
+                  </tr>
+                ))}
+                {activityLogs.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-8 py-20 text-center text-gray-400 italic">Belum ada catatan aktivitas.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
+
   );
 }

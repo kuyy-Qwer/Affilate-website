@@ -52,21 +52,59 @@ export const useStore = create<AppState>((set, get) => ({
   initAuth: () => {
     onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
-        try {
-          const docRef = doc(db, 'users', fbUser.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
+        // Retry fetching Firestore doc a few times in case of transient offline errors
+        const fetchUserDoc = async (retries = 3): Promise<void> => {
+          try {
+            const docRef = doc(db, 'users', fbUser.uid);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              set({ 
+                user: { ...docSnap.data(), emailVerified: fbUser.emailVerified } as User, 
+                isAuthLoading: false 
+              });
+            } else {
+              // Firebase Auth user exists but no Firestore doc yet (e.g. doc write failed)
+              // Keep a minimal user object so the app doesn't treat them as logged out
+              set({ 
+                user: {
+                  id: fbUser.uid,
+                  name: fbUser.displayName || 'Pengguna',
+                  email: fbUser.email || '',
+                  role: 'affiliate',
+                  emailVerified: fbUser.emailVerified,
+                  wishlist: [],
+                  commissionEarned: 0,
+                  totalSales: 0,
+                  totalClicks: 0,
+                } as User, 
+                isAuthLoading: false 
+              });
+            }
+          } catch (error: any) {
+            if (retries > 0 && (error?.code === 'unavailable' || error?.message?.includes('offline'))) {
+              console.warn(`Firestore offline, retrying... (${retries} left)`);
+              await new Promise(res => setTimeout(res, 1500));
+              return fetchUserDoc(retries - 1);
+            }
+            console.error('Error fetching user profile:', error);
+            // Don't set user to null on network error — keep them "logged in" with basic info
             set({ 
-              user: { ...docSnap.data(), emailVerified: fbUser.emailVerified } as User, 
+              user: {
+                id: fbUser.uid,
+                name: fbUser.displayName || 'Pengguna',
+                email: fbUser.email || '',
+                role: 'affiliate',
+                emailVerified: fbUser.emailVerified,
+                wishlist: [],
+                commissionEarned: 0,
+                totalSales: 0,
+                totalClicks: 0,
+              } as User, 
               isAuthLoading: false 
             });
-          } else {
-            set({ user: null, isAuthLoading: false });
           }
-        } catch (error) {
-          console.error('Error fetching user profile:', error);
-          set({ user: null, isAuthLoading: false });
-        }
+        };
+        await fetchUserDoc();
       } else {
         set({ user: null, isAuthLoading: false });
       }

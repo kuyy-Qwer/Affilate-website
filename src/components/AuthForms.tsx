@@ -22,29 +22,34 @@ const handleGoogleSignIn = async (onSuccess: () => void, setError: (m: string) =
     const provider = new GoogleAuthProvider();
     const res = await signInWithPopup(auth, provider);
     
-    // Check if user exists
-    const userRef = doc(db, 'users', res.user.uid);
-    const userSnap = await getDoc(userRef);
-    
-    if (!userSnap.exists()) {
-      const incomingRef = localStorage.getItem('affiliate_ref');
-      const namePart = (res.user.displayName || 'USER').split(' ')[0].toUpperCase().replace(/[^A-Z0-9]/g, '');
-      const randomPart = Math.random().toString(36).substring(7).toUpperCase();
-      const newReferralCode = `${namePart}-${randomPart}`;
+    // Try to create/check Firestore doc, but don't block login if Firestore is temporarily offline
+    try {
+      const userRef = doc(db, 'users', res.user.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (!userSnap.exists()) {
+        const incomingRef = localStorage.getItem('affiliate_ref');
+        const namePart = (res.user.displayName || 'USER').split(' ')[0].toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const randomPart = Math.random().toString(36).substring(7).toUpperCase();
+        const newReferralCode = `${namePart}-${randomPart}`;
 
-      await setDoc(userRef, {
-        id: res.user.uid,
-        name: res.user.displayName || 'Tanpa Nama',
-        email: res.user.email || '',
-        role: 'affiliate',
-        referralCode: newReferralCode,
-        referredBy: incomingRef || null,
-        wishlist: [],
-        commissionEarned: 0,
-        totalSales: 0,
-        totalClicks: 0,
-        createdAt: new Date().toISOString()
-      });
+        await setDoc(userRef, {
+          id: res.user.uid,
+          name: res.user.displayName || 'Tanpa Nama',
+          email: res.user.email || '',
+          role: 'affiliate',
+          referralCode: newReferralCode,
+          referredBy: incomingRef || null,
+          wishlist: [],
+          commissionEarned: 0,
+          totalSales: 0,
+          totalClicks: 0,
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (firestoreErr: any) {
+      // Firestore error (e.g. offline) should not prevent login — initAuth will retry
+      console.warn('Firestore doc check/create failed after Google sign-in:', firestoreErr?.message);
     }
     
     onSuccess();
@@ -71,12 +76,30 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
       await signInWithEmailAndPassword(auth, data.email, data.password);
       onSuccess();
     } catch (err: any) {
-      setError('Email atau password salah');
+      switch (err.code) {
+        case 'auth/user-not-found':
+          setError('Email tidak terdaftar. Silakan daftar terlebih dahulu.');
+          break;
+        case 'auth/wrong-password':
+        case 'auth/invalid-credential':
+          setError('Password salah. Jika Anda mendaftar via Google, gunakan tombol "Lanjutkan dengan Google" di bawah.');
+          break;
+        case 'auth/account-exists-with-different-credential':
+          setError('Akun ini terdaftar dengan metode lain. Coba login dengan Google.');
+          break;
+        case 'auth/too-many-requests':
+          setError('Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.');
+          break;
+        case 'auth/invalid-email':
+          setError('Format email tidak valid.');
+          break;
+        default:
+          setError('Gagal login: ' + (err.message || 'Terjadi kesalahan.'));
+      }
     } finally {
       setLoading(false);
     }
   };
-
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 w-full max-w-sm">
       <div className="space-y-1">
@@ -202,7 +225,19 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
       });
       setRegistered(true);
     } catch (err: any) {
-      setError(err.message || 'Gagal mendaftar');
+      switch (err.code) {
+        case 'auth/email-already-in-use':
+          setError('Email ini sudah terdaftar. Silakan login, atau gunakan tombol Google jika Anda mendaftar via Google.');
+          break;
+        case 'auth/invalid-email':
+          setError('Format email tidak valid.');
+          break;
+        case 'auth/weak-password':
+          setError('Password terlalu lemah. Gunakan minimal 6 karakter.');
+          break;
+        default:
+          setError(err.message || 'Gagal mendaftar. Coba lagi.');
+      }
     } finally {
       setLoading(false);
     }

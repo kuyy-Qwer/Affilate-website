@@ -50,6 +50,11 @@ import {
   Legend
 } from 'recharts';
 import { Joyride, Step } from 'react-joyride';
+import { Helmet, HelmetProvider } from 'react-helmet-async';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
+
+
 import { auth, db } from './lib/firebase';
 import { signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where, addDoc, updateDoc } from 'firebase/firestore';
@@ -57,6 +62,8 @@ import { Product, AffiliateStats, User, Sale, Coupon, Review } from './types';
 import Navbar from './components/Navbar';
 import { LoginForm, RegisterForm } from './components/AuthForms';
 import AdminDashboard from './components/AdminDashboard';
+import DashboardLayout from './components/DashboardLayout';
+import PurchasesView from './components/PurchasesView';
 import { useStore } from './store/useStore';
 
 export default function App() {
@@ -112,9 +119,10 @@ export default function App() {
       const limit = couponData.usageLimitPerUser || Infinity;
       
       if (salesSnap.size >= limit) {
-         alert(`Batas penggunaan kupon ini adalah ${limit}x per pelanggan.`);
+         alert(`Gagal menerapkan kupon: Batas penggunaan untuk pelanggan Anda telah tercapai (${limit}x).`);
          return;
       }
+
 
       setAppliedCoupon(couponData);
       alert('Kupon berhasil diterapkan!');
@@ -159,6 +167,13 @@ export default function App() {
     fetchProducts();
     fetchGlobalConfig();
   }, []);
+
+  // Auto-redirect to dashboard when user logs in from any page
+  useEffect(() => {
+    if (user && (activeTab === 'login' || activeTab === 'register' || activeTab === 'home')) {
+      setActiveTab(user.role === 'admin' ? 'admin' : 'affiliate');
+    }
+  }, [user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -334,34 +349,8 @@ export default function App() {
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
       case 'products':
         return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} user={user} onToggleWishlist={updateWishlist} getDiscountedPrice={getDiscountedPrice} />;
-      case 'wishlist':
-        return user ? <WishlistView products={products} user={user} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} getDiscountedPrice={getDiscountedPrice} /> : <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'pricing':
         return <PricingView />;
-      case 'purchases':
-        return user ? <PurchasesView /> : <AuthWrapper type="login" setTab={setActiveTab} />;
-      case 'affiliate':
-        return user ? <AffiliateDashboard 
-          user={user}
-          setUser={setUser}
-          data={{
-            totalClicks: user.totalClicks || 0,
-            totalSales: user.totalSales || 0,
-            totalCommission: user.commissionEarned || 0,
-            referralLink: `https://${window.location.host}/?ref=${user.referralCode}`
-          }} 
-          onLogout={handleLogout} 
-        /> : <AuthWrapper type="login" setTab={setActiveTab} />;
-      case 'admin':
-        return user?.role === 'admin' ? <div className="space-y-8">
-          <div className="flex justify-between items-center">
-            <h1 className="text-3xl font-bold">Admin Panel</h1>
-            <button onClick={handleLogout} className="flex items-center gap-2 text-sm font-semibold text-red-500"><LogOut size={18}/> Keluar</button>
-          </div>
-          <AdminDashboard />
-        </div> : <div className="text-center py-20">Akses Ditolak</div>;
-      case 'profile':
-        return user ? <UserProfile /> : <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'login':
         return <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'register':
@@ -370,6 +359,93 @@ export default function App() {
         return <FeaturesView />;
       default:
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
+    }
+  };
+
+  // Dashboard tabs — rendered with sidebar layout
+  const dashboardTabs = ['affiliate', 'affiliate-stats', 'affiliate-marketing', 'affiliate-leaderboard', 'purchases', 'wishlist', 'profile', 'admin', 'admin-products', 'admin-users', 'admin-sales', 'admin-coupons', 'admin-withdrawals', 'admin-events', 'admin-logs'];
+  const isDashboardTab = dashboardTabs.includes(activeTab);
+
+  const renderDashboardContent = () => {
+    if (user && !user.emailVerified && activeTab !== 'profile') {
+      return <VerificationRequired />;
+    }
+    switch (activeTab) {
+      case 'affiliate':
+        return <AffiliateDashboard
+          user={user!}
+          setUser={setUser}
+          data={{
+            totalClicks: user?.totalClicks || 0,
+            totalSales: user?.totalSales || 0,
+            totalCommission: user?.commissionEarned || 0,
+            referralLink: `https://${window.location.host}/?ref=${user?.referralCode}`
+          }}
+          onLogout={handleLogout}
+          defaultTab="stats"
+        />;
+      case 'affiliate-stats':
+        return <AffiliateDashboard
+          user={user!}
+          setUser={setUser}
+          data={{
+            totalClicks: user?.totalClicks || 0,
+            totalSales: user?.totalSales || 0,
+            totalCommission: user?.commissionEarned || 0,
+            referralLink: `https://${window.location.host}/?ref=${user?.referralCode}`
+          }}
+          onLogout={handleLogout}
+          defaultTab="stats"
+        />;
+      case 'affiliate-marketing':
+        return <AffiliateDashboard
+          user={user!}
+          setUser={setUser}
+          data={{
+            totalClicks: user?.totalClicks || 0,
+            totalSales: user?.totalSales || 0,
+            totalCommission: user?.commissionEarned || 0,
+            referralLink: `https://${window.location.host}/?ref=${user?.referralCode}`
+          }}
+          onLogout={handleLogout}
+          defaultTab="marketing"
+        />;
+      case 'affiliate-leaderboard':
+        return <AffiliateDashboard
+          user={user!}
+          setUser={setUser}
+          data={{
+            totalClicks: user?.totalClicks || 0,
+            totalSales: user?.totalSales || 0,
+            totalCommission: user?.commissionEarned || 0,
+            referralLink: `https://${window.location.host}/?ref=${user?.referralCode}`
+          }}
+          onLogout={handleLogout}
+          defaultTab="leaderboard"
+        />;
+      case 'purchases':
+        return <PurchasesView />;
+      case 'wishlist':
+        return <WishlistView products={products} user={user!} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} getDiscountedPrice={getDiscountedPrice} />;
+      case 'profile':
+        return <UserProfile />;
+      case 'admin':
+      case 'admin-products':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="products" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-users':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="users" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-sales':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="sales" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-coupons':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="coupons" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-withdrawals':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="withdrawals" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-events':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="events" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      case 'admin-logs':
+        return user?.role === 'admin' ? <AdminDashboard defaultTab="logs" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
+      default:
+        return null;
     }
   };
 
@@ -382,124 +458,154 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F9FAFB] font-sans text-gray-900">
-      <Joyride 
-        {...({
-          steps: tourSteps,
-          run: runTour,
-          continuous: true,
-          showProgress: true,
-          showSkipButton: true,
-          styles: {
-            options: {
-              primaryColor: '#4f46e5',
-              zIndex: 1000,
-            }
-          },
-          locale: {
-            back: 'Kembali',
-            close: 'Tutup',
-            last: 'Selesai',
-            next: 'Lanjut',
-            skip: 'Lewati'
-          },
-          callback: handleTourCallback
-        } as any)}
-      />
-      <Navbar user={user} onNavigate={setActiveTab} activeTab={activeTab} onLogout={handleLogout} />
-
-      <AnimatePresence>
-        {purchaseModal.isOpen && purchaseModal.product && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-            <motion.div 
-               initial={{ opacity: 0, scale: 0.9 }}
-               animate={{ opacity: 1, scale: 1 }}
-               exit={{ opacity: 0, scale: 0.9 }}
-               className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative shadow-2xl"
-            >
-               <button onClick={() => { setPurchaseModal({ isOpen: false, product: null }); setAppliedCoupon(null); setCouponCode(''); }} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
-                 <X size={24} />
-               </button>
-               
-               <div className="space-y-2">
-                 <h3 className="text-3xl font-black tracking-tight">Checkout</h3>
-                 <p className="text-gray-500 font-medium">Selesaikan transaksi untuk mengakses produk ini.</p>
-               </div>
-
-               <div className="flex gap-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
-                  <img src={purchaseModal.product.image} className="w-20 h-20 rounded-2xl object-cover shadow-sm" referrerPolicy="no-referrer" />
-                  <div className="flex-1 space-y-1">
-                    <p className="font-black text-gray-900 line-clamp-1">{purchaseModal.product.name}</p>
-                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{purchaseModal.product.category}</p>
-                    <p className="text-lg font-black text-indigo-600">Rp {purchaseModal.product.price.toLocaleString('id-ID')}</p>
-                  </div>
-               </div>
-
-               <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <input 
-                      value={couponCode}
-                      onChange={e => setCouponCode(e.target.value.toUpperCase())}
-                      placeholder="Punya Kode Kupon?"
-                      className="flex-1 px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm"
-                    />
-                    <button 
-                      onClick={applyCoupon}
-                      className="px-6 py-4 bg-gray-900 text-white rounded-2xl font-bold text-sm hover:bg-gray-800 transition-all"
-                    >Terapkan</button>
-                  </div>
-                  {appliedCoupon && (
-                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center bg-green-50 px-4 py-2 rounded-xl text-green-700 text-xs font-bold">
-                       <div className="flex items-center gap-2">
-                         <Ticket size={14} />
-                         Kupon "{appliedCoupon.code}" Berhasil!
-                       </div>
-                       <span>-{appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}%` : `Rp ${appliedCoupon.discountValue.toLocaleString('id-ID')}`}</span>
-                    </motion.div>
-                  )}
-               </div>
-
-               <div className="pt-6 border-t border-gray-100 space-y-4">
-                  <div className="flex justify-between items-center text-sm font-bold text-gray-500">
-                    <span>Subtotal</span>
-                    <span>Rp {purchaseModal.product.price.toLocaleString('id-ID')}</span>
-                  </div>
-                  {appliedCoupon && (
-                     <div className="flex justify-between items-center text-sm font-bold text-green-600">
-                        <span>Diskon Kupon</span>
-                        <span>- Rp {(purchaseModal.product.price - calculateTotal(purchaseModal.product.price)).toLocaleString('id-ID')}</span>
-                     </div>
-                  )}
-                  <div className="flex justify-between items-center text-xl font-black text-gray-900">
-                    <span>Total Bayar</span>
-                    <span className="text-indigo-600">Rp {calculateTotal(purchaseModal.product.price).toLocaleString('id-ID')}</span>
-                  </div>
-               </div>
-
-               <button 
-                 onClick={handlePurchase}
-                 disabled={isBuying || !user?.emailVerified}
-                 className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-               >
-                 {isBuying ? <Zap className="animate-spin" size={24} /> : !user?.emailVerified ? (
-                   <>
-                     <AlertTriangle size={24} />
-                     Verifikasi Email untuk Membeli
-                   </>
-                 ) : (
-                   <>
-                     <CreditIcon size={24} />
-                     Bayar & Akses Sekarang
-                   </>
-                 )}
-               </button>
-            </motion.div>
-          </div>
+    <HelmetProvider>
+      <div className="min-h-screen bg-[#F9FAFB] font-sans text-gray-900">
+        <Helmet>
+          <title>DigiSell | Marketplace Produk Digital & Afiliasi</title>
+          <meta name="description" content="Platform modern untuk jual beli produk digital dan program afiliasi dengan komisi tinggi." />
+          <meta property="og:title" content="DigiSell - Marketplace Digital" />
+          <meta property="og:description" content="Akses produk premium dan hasilkan komisi afiliasi." />
+          <meta property="og:type" content="website" />
+        </Helmet>
+        
+        {detailModal.isOpen && detailModal.product && (
+          <Helmet>
+            <title>{detailModal.product.name} | DigiSell</title>
+            <meta name="description" content={detailModal.product.description.slice(0, 160)} />
+            <meta property="og:image" content={detailModal.product.image} />
+          </Helmet>
         )}
-      </AnimatePresence>
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {user && !user.emailVerified && (
+
+        <Joyride 
+          {...({
+            steps: tourSteps,
+            run: runTour,
+            continuous: true,
+            showProgress: true,
+            showSkipButton: true,
+            styles: {
+              options: {
+                primaryColor: '#4f46e5',
+                zIndex: 1000,
+              }
+            },
+            locale: {
+              back: 'Kembali',
+              close: 'Tutup',
+              last: 'Selesai',
+              next: 'Lanjut',
+              skip: 'Lewati'
+            },
+            callback: handleTourCallback
+          } as any)}
+        />
+
+        {/* Modals */}
+        <AnimatePresence>
+          {purchaseModal.isOpen && purchaseModal.product && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+              <motion.div 
+                 initial={{ opacity: 0, scale: 0.9 }}
+                 animate={{ opacity: 1, scale: 1 }}
+                 exit={{ opacity: 0, scale: 0.9 }}
+                 className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative shadow-2xl"
+              >
+                 <button onClick={() => { setPurchaseModal({ isOpen: false, product: null }); setAppliedCoupon(null); setCouponCode(''); }} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                   <X size={24} />
+                 </button>
+                 
+                 <div className="space-y-2">
+                   <h3 className="text-3xl font-black tracking-tight">Checkout</h3>
+                   <p className="text-gray-500 font-medium">Selesaikan transaksi untuk mengakses produk ini.</p>
+                 </div>
+
+                 <div className="flex gap-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                    <img src={purchaseModal.product.image} className="w-20 h-20 rounded-2xl object-cover shadow-sm" referrerPolicy="no-referrer" />
+                    <div className="flex-1 space-y-1">
+                      <p className="font-black text-gray-900 line-clamp-1">{purchaseModal.product.name}</p>
+                      <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{purchaseModal.product.category}</p>
+                      <p className="text-lg font-black text-indigo-600">Rp {purchaseModal.product.price.toLocaleString('id-ID')}</p>
+                    </div>
+                 </div>
+
+                 <div className="space-y-4">
+                    <div className="flex gap-2">
+                      <input 
+                        value={couponCode}
+                        onChange={e => setCouponCode(e.target.value.toUpperCase())}
+                        placeholder="Punya Kode Kupon?"
+                        className="flex-1 px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm"
+                      />
+                      <button 
+                        onClick={applyCoupon}
+                        className="px-6 py-4 bg-gray-900 text-white rounded-2xl font-bold text-sm hover:bg-gray-800 transition-all"
+                      >Terapkan</button>
+                    </div>
+                    {appliedCoupon && (
+                      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center bg-green-50 px-4 py-2 rounded-xl text-green-700 text-xs font-bold">
+                         <div className="flex items-center gap-2">
+                           <Ticket size={14} />
+                           Kupon "{appliedCoupon.code}" Berhasil!
+                         </div>
+                         <span>-{appliedCoupon.discountType === 'percentage' ? `${appliedCoupon.discountValue}%` : `Rp ${appliedCoupon.discountValue.toLocaleString('id-ID')}`}</span>
+                      </motion.div>
+                    )}
+                 </div>
+
+                 <div className="pt-6 border-t border-gray-100 space-y-4">
+                    <div className="flex justify-between items-center text-sm font-bold text-gray-500">
+                      <span>Subtotal</span>
+                      <span>Rp {purchaseModal.product.price.toLocaleString('id-ID')}</span>
+                    </div>
+                    {appliedCoupon && (
+                       <div className="flex justify-between items-center text-sm font-bold text-green-600">
+                          <span>Diskon Kupon</span>
+                          <span>- Rp {(purchaseModal.product.price - calculateTotal(purchaseModal.product.price)).toLocaleString('id-ID')}</span>
+                       </div>
+                    )}
+                    <div className="flex justify-between items-center text-xl font-black text-gray-900">
+                      <span>Total Bayar</span>
+                      <span className="text-indigo-600">Rp {calculateTotal(purchaseModal.product.price).toLocaleString('id-ID')}</span>
+                    </div>
+                 </div>
+
+                 <button 
+                   onClick={handlePurchase}
+                   disabled={isBuying || !user?.emailVerified}
+                   className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                 >
+                   {isBuying ? <Zap className="animate-spin" size={24} /> : !user?.emailVerified ? (
+                     <>
+                       <AlertTriangle size={24} />
+                       Verifikasi Email untuk Membeli
+                     </>
+                   ) : (
+                     <>
+                       <CreditIcon size={24} />
+                       Bayar & Akses Sekarang
+                     </>
+                   )}
+                 </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Dashboard Layout or Public Layout */}
+        {isDashboardTab && user ? (
+          <DashboardLayout
+            activeTab={activeTab}
+            onNavigate={setActiveTab}
+            onLogout={handleLogout}
+            onNavigatePublic={setActiveTab}
+          >
+            {renderDashboardContent()}
+          </DashboardLayout>
+        ) : (
+          <>
+            <Navbar user={user} onNavigate={setActiveTab} activeTab={activeTab} onLogout={handleLogout} />
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+              {user && !user.emailVerified && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -655,9 +761,13 @@ export default function App() {
           </button>
         </div>
       </footer>
-    </div>
+          </>
+        )}
+      </div>
+    </HelmetProvider>
   );
 }
+
 
 function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPricing: () => void }) {
   return (
@@ -905,6 +1015,20 @@ function WishlistView({ products, user, onPurchase, setDetailModal, onToggleWish
 }
 
 function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t: any) => void }) {
+  const { user } = useStore();
+
+  // Reactive redirect: when store updates with logged-in user, navigate to dashboard
+  useEffect(() => {
+    if (user) {
+      setTab(user.role === 'admin' ? 'admin' : 'affiliate');
+    }
+  }, [user]);
+
+  const handleLoginSuccess = () => {
+    // Navigate immediately — useEffect above will also fire when store updates
+    setTab('affiliate');
+  };
+
   return (
     <div className="max-w-md mx-auto py-8 md:py-12 px-4">
       <div className="space-y-8 bg-white p-6 md:p-10 rounded-[2.5rem] border border-gray-100 shadow-sm">
@@ -914,7 +1038,9 @@ function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t:
            {type === 'login' ? 'Masuk untuk mengelola afiliasi Anda' : 'Bergabung sebagai afiliasi dan mulai hasilkan cuan'}
          </p>
       </div>
-      {type === 'login' ? <LoginForm onSuccess={() => setTab('home')} /> : <RegisterForm onSuccess={() => setTab('home')} />}
+      {type === 'login' 
+        ? <LoginForm onSuccess={handleLoginSuccess} /> 
+        : <RegisterForm onSuccess={() => setTab('home')} />}
       <div className="text-center">
          <button 
            onClick={() => setTab(type === 'login' ? 'register' : 'login')}
@@ -998,12 +1124,13 @@ function VerificationRequired() {
 }
 
 function UserProfile() {
-  const { user, updateUserProfile } = useStore();
+  const { user, updateUserProfile, getAuthHeaders } = useStore();
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [isIndonesian, setIsIndonesian] = useState(user?.isIndonesian !== false);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1016,6 +1143,28 @@ function UserProfile() {
       alert(err.message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleBootstrapAdmin = async () => {
+    if (!confirm('Jadikan akun Anda sebagai Admin pertama? Tindakan ini tidak bisa dibatalkan.')) return;
+    setIsBootstrapping(true);
+    try {
+      const resp = await fetch('/api/bootstrap-admin', {
+        method: 'POST',
+        headers: await getAuthHeaders()
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        alert(data.message || 'Berhasil! Silakan refresh halaman.');
+        window.location.reload();
+      } else {
+        alert('Gagal: ' + (data.error || 'Server error'));
+      }
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally {
+      setIsBootstrapping(false);
     }
   };
 
@@ -1050,6 +1199,31 @@ function UserProfile() {
               </button>
             )}
           </div>
+
+          {/* Bootstrap Admin Button (only show if user is not admin) */}
+          {user.role !== 'admin' && (
+            <div className="mb-8 p-5 bg-purple-50 border border-purple-100 rounded-2xl">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-purple-600 flex-shrink-0">
+                  <Shield size={20} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-purple-900 text-sm mb-1">Belum Ada Admin?</h3>
+                  <p className="text-xs text-purple-600 mb-3">
+                    Jika Anda adalah pemilik platform dan belum ada admin, klik tombol di bawah untuk menjadikan akun Anda sebagai Admin pertama.
+                  </p>
+                  <button
+                    onClick={handleBootstrapAdmin}
+                    disabled={isBootstrapping}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-xl text-xs font-bold hover:bg-purple-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isBootstrapping ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
+                    {isBootstrapping ? 'Memproses...' : 'Jadikan Admin Pertama'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1128,12 +1302,14 @@ function UserProfile() {
   );
 }
 
-function AffiliateDashboard({ data, user, onLogout, setUser }: { data: AffiliateStats, user: User, onLogout: () => void, setUser: (u: User) => void }) {
+function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats' }: { data: AffiliateStats, user: User, onLogout: () => void, setUser: (u: User) => void, defaultTab?: 'stats' | 'marketing' | 'leaderboard' }) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
   const [topProducts, setTopProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
   
   // Withdrawal States
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
@@ -1146,17 +1322,28 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
   const [dateFilter, setDateFilter] = useState<'all' | '7days' | 'month' | 'custom'>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
+  const [activeTab, setActiveTab] = useState<'stats' | 'marketing' | 'leaderboard'>(defaultTab);
+
+  const ctr = data.totalClicks > 0 ? ((sales.length / data.totalClicks) * 100).toFixed(2) : '0';
+  const tier = user.tier || 'bronze';
+  const tierColor = tier === 'diamond' ? 'text-blue-600' : tier === 'gold' ? 'text-amber-500' : 'text-gray-500';
+
 
   const handleWithdrawRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (withdrawAmount <= 0) {
+      alert('Error: Nominal pencairan harus berupa angka positif.');
+      return;
+    }
     if (withdrawAmount < 50000) {
-      alert('Minimal penarikan adalah Rp 50.000');
+      alert('Info: Minimal penarikan dana adalah Rp 50.000');
       return;
     }
     if (withdrawAmount > (user.commissionEarned || 0)) {
-      alert('Saldo komisi tidak mencukupi');
+      alert('Error: Saldo tersedia tidak mencukupi untuk nominal pencairan tersebut.');
       return;
     }
+
 
     setIsWithdrawing(true);
     const { getAuthHeaders } = useStore.getState();
@@ -1261,8 +1448,19 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
         setLoading(false);
       }
     };
+
+    const fetchProducts = async () => {
+      try {
+        const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+        const snap = await getDocs(q);
+        setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+      } catch (err) { console.error(err); }
+    };
+
     fetchSales();
+    fetchProducts();
   }, [user.id]);
+
 
   const uniqueProducts = Array.from(new Set(sales.map(s => s.productName || 'Produk Digital')));
 
@@ -1316,7 +1514,17 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
            </div>
            <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString()} icon={<ShoppingBag />} trend="+5" />
            <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
+           <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.2rem] border border-gray-100 flex flex-col justify-center">
+              <div className="flex justify-between items-center mb-2">
+                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Conversion Rate (CTR)</p>
+                 <TrendingUp size={14} className="text-green-500" />
+              </div>
+              <h3 className="text-3xl font-black">{ctr}%</h3>
+              <p className="text-[10px] text-gray-400 mt-1 font-medium italic">Klik vs Penjualan</p>
+           </div>
         </div>
+
+        
 
         {/* Withdrawal Modal */}
         <AnimatePresence>
@@ -1326,7 +1534,7 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative overflow-hidden"
+                className="bg-white v-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative overflow-hidden"
               >
                   <button onClick={() => setIsWithdrawModalOpen(false)} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
                     <X size={24} />
@@ -1400,55 +1608,165 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
           )}
         </AnimatePresence>
 
-        <div id="commission-chart" className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
-            <div>
-              <h3 className="text-lg md:text-xl font-bold">Analitik Penjualan (30 Hari)</h3>
-              <p className="text-gray-500 text-xs md:text-sm">Visualisasi performa penjualan per produk.</p>
-            </div>
-            <div className="flex items-center gap-1 md:gap-2 p-1 bg-gray-50 rounded-xl w-fit">
-              <button onClick={() => setDateFilter('7days')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === '7days' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>7H</button>
-              <button onClick={() => setDateFilter('month')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>30H</button>
-              <button onClick={() => setDateFilter('all')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>Semua</button>
-            </div>
-          </div>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="date" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: '#9ca3af', fontSize: 10}} 
-                  dy={10}
-                />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: '#9ca3af', fontSize: 10}} 
-                />
-                <Tooltip 
-                  contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
-                  cursor={{fill: '#f8fafc'}}
-                />
-                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '10px'}} />
-                {Array.from(new Set(sales.map(s => s.productName || 'Lainnya'))).slice(0, 5).map((prodName, idx) => (
-                  <Bar 
-                    key={prodName} 
-                    dataKey={prodName} 
-                    stackId="a" 
-                    fill={['#4f46e5', '#818cf8', '#c7d2fe', '#6366f1', '#a5b4fc'][idx % 5]} 
-                    radius={idx === 0 ? [0, 0, 4, 4] : [0, 0, 0, 0]}
-                  />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        {/* Affiliate Tabs */}
+
+        <div className="flex gap-2 p-1 bg-gray-100 rounded-2xl w-fit">
+           <button onClick={() => setActiveTab('stats')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'stats' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Statistik</button>
+           <button onClick={() => setActiveTab('marketing')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'marketing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Marketing Kit</button>
+           <button onClick={() => setActiveTab('leaderboard')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Leaderboard</button>
         </div>
 
-        {/* Affiliate Leaderboard */}
-        <div id="affiliate-leaderboard" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-8">
+        {activeTab === 'stats' && (
+          <>
+            <div className={`p-8 rounded-[2.5rem] border bg-gradient-to-br from-white to-gray-50 flex items-center justify-between ${tier === 'diamond' ? 'border-blue-100' : tier === 'gold' ? 'border-amber-100' : 'border-gray-100'}`}>
+              <div className="flex items-center gap-6">
+                 <div className={`w-16 h-16 rounded-[2rem] flex items-center justify-center font-black text-2xl uppercase ${tier === 'diamond' ? 'bg-blue-600 text-white' : tier === 'gold' ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                    {tier.charAt(0)}
+                 </div>
+                 <div>
+                    <h4 className="text-xl font-black">Level Akun: <span className={`uppercase ${tierColor}`}>{tier}</span></h4>
+                    <p className="text-sm text-gray-500">Komisi Aktif: <span className="font-bold text-indigo-600">{tier === 'diamond' ? '25%' : tier === 'gold' ? '15%' : '10%'}</span> per penjualan.</p>
+                 </div>
+              </div>
+              <div className="text-right hidden md:block">
+                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Target Berikutnya</p>
+                 <p className="text-sm font-bold">{tier === 'bronze' ? '10' : tier === 'gold' ? '50' : '--'} Penjualan untuk Upgrade</p>
+              </div>
+            </div>
+            {/* Charts... */}
+            <div id="commission-chart" className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
+                 <div>
+                   <h3 className="text-lg md:text-xl font-bold">Analitik Penjualan (30 Hari)</h3>
+                   <p className="text-gray-500 text-xs md:text-sm">Visualisasi performa penjualan per produk.</p>
+                 </div>
+                 <div className="flex items-center gap-1 md:gap-2 p-1 bg-gray-50 rounded-xl w-fit">
+                   <button onClick={() => setDateFilter('7days')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === '7days' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>7H</button>
+                   <button onClick={() => setDateFilter('month')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>30H</button>
+                   <button onClick={() => setDateFilter('all')} className={`px-3 md:px-4 py-1.5 text-[10px] md:text-xs font-bold rounded-lg transition-all ${dateFilter === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>Semua</button>
+                 </div>
+               </div>
+               <div className="h-[300px] w-full">
+                 <ResponsiveContainer width="100%" height="100%">
+                   <BarChart data={chartData}>
+                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                     <XAxis 
+                       dataKey="date" 
+                       axisLine={false} 
+                       tickLine={false} 
+                       tick={{fill: '#9ca3af', fontSize: 10}} 
+                       dy={10}
+                     />
+                     <YAxis 
+                       axisLine={false} 
+                       tickLine={false} 
+                       tick={{fill: '#9ca3af', fontSize: 10}} 
+                     />
+                     <Tooltip 
+                       contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
+                       cursor={{fill: '#f8fafc'}}
+                     />
+                     <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '10px'}} />
+                     {Array.from(new Set(sales.map(s => s.productName || 'Lainnya'))).slice(0, 5).map((prodName, idx) => (
+                       <Bar 
+                         key={prodName} 
+                         dataKey={prodName} 
+                         stackId="a" 
+                         fill={['#4f46e5', '#818cf8', '#c7d2fe', '#6366f1', '#a5b4fc'][idx % 5]} 
+                         radius={idx === 0 ? [0, 0, 4, 4] : [0, 0, 0, 0]}
+                       />
+                     ))}
+                   </BarChart>
+                 </ResponsiveContainer>
+               </div>
+            </div>
+          </>
+        )}
+
+
+        {activeTab === 'marketing' && (
+          <div className="space-y-10">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 space-y-6">
+                   <div className="flex items-center gap-3">
+                      <Tag className="text-indigo-600" />
+                      <h4 className="text-xl font-bold">Marketing Kit Produk</h4>
+                   </div>
+                   <div className="space-y-8">
+                      {products.filter(p => p.marketingKit && (p.marketingKit.banners.length > 0 || p.marketingKit.swipeFiles.length > 0)).length === 0 ? (
+                        <p className="text-sm text-gray-400 italic">Belum ada bahan promosi yang tersedia.</p>
+                      ) : (
+                        products.filter(p => p.marketingKit && (p.marketingKit.banners.length > 0 || p.marketingKit.swipeFiles.length > 0)).map(p => (
+                          <div key={p.id} className="space-y-6 pt-6 border-t first:border-t-0 border-gray-100">
+                             <div className="flex items-center justify-between">
+                                <p className="font-black text-indigo-600 uppercase tracking-tighter text-sm">{p.name}</p>
+                                <span className="text-[10px] bg-indigo-50 text-indigo-400 px-2 py-0.5 rounded-full font-bold">Ready</span>
+                             </div>
+                             
+                             {p.marketingKit?.swipeFiles && p.marketingKit.swipeFiles.length > 0 && (
+                               <div>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Copywriting (Swipe Files)</p>
+                                  <div className="space-y-3">
+                                     {p.marketingKit.swipeFiles.map((sf, idx) => (
+                                       <div key={idx} className="p-4 bg-gray-50 rounded-2xl space-y-2 border border-gray-100">
+                                          <p className="font-bold text-sm">{sf.title}</p>
+                                          <p className="text-xs text-gray-500 leading-relaxed italic line-clamp-3">"{sf.content}"</p>
+                                          <button 
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(sf.content);
+                                              alert('Copywriting disalin ke clipboard!');
+                                            }} 
+                                            className="text-[10px] font-black text-indigo-600 uppercase hover:underline"
+                                          >
+                                            Salin Teks
+                                          </button>
+                                       </div>
+                                     ))}
+                                  </div>
+                               </div>
+                             )}
+
+                             {p.marketingKit?.banners && p.marketingKit.banners.length > 0 && (
+                               <div>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Banner Ads</p>
+                                  <div className="grid grid-cols-2 gap-4">
+                                     {p.marketingKit.banners.map((url, idx) => (
+                                       <div key={idx} className="aspect-square bg-gray-100 rounded-2xl overflow-hidden relative group border border-gray-100">
+                                          <img src={url} className="w-full h-full object-cover" />
+                                          <a 
+                                            href={url} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="absolute inset-0 bg-indigo-600/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center font-bold text-xs"
+                                          >
+                                            Lihat Banner
+                                          </a>
+                                       </div>
+                                     ))}
+                                  </div>
+                               </div>
+                             )}
+                          </div>
+                        ))
+                      )}
+                   </div>
+                </div>
+                <div className="bg-indigo-600 p-10 rounded-[2.5rem] text-white flex flex-col justify-center space-y-6 shadow-xl shadow-indigo-100">
+                   <h4 className="text-3xl font-black italic">"Senjata Perang" Anda Siap!</h4>
+                   <p className="text-indigo-100 opacity-80 leading-relaxed text-lg">Gunakan bahan promosi yang sudah kami sediakan untuk meningkatkan konversi hingga 3x lipat. Fokuslah pada copywriting yang menggugah rasa penasaran.</p>
+                   <div className="pt-4 flex gap-3">
+                      <div className="px-6 py-2 bg-white/10 backdrop-blur-md rounded-full text-xs font-bold uppercase tracking-widest">Affiliate Secret Tip</div>
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+
+
+        {activeTab === 'leaderboard' && (
+          /* Affiliate Leaderboard */
+          <div id="affiliate-leaderboard" className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-8">
+
            <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                  <div className="p-3 bg-amber-50 rounded-2xl text-amber-500">
@@ -1500,6 +1818,7 @@ function AffiliateDashboard({ data, user, onLogout, setUser }: { data: Affiliate
               )}
            </div>
         </div>
+        )}
 
        <div id="referral-link" className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-10 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-indigo-100">
            <div className="space-y-2">
@@ -2067,122 +2386,6 @@ function ReviewForm({ productId, onSuccess }: { productId: string, onSuccess: ()
          {loading ? <Zap className="animate-spin" size={20} /> : 'Kirim Ulasan Sekarang'}
        </button>
     </form>
-  );
-}
-
-function PurchasesView() {
-  const [purchases, setPurchases] = useState<Sale[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchPurchases = async () => {
-      try {
-        const { getAuthHeaders } = useStore.getState();
-        const resp = await fetch('/api/customer/purchases', {
-          headers: await getAuthHeaders()
-        });
-        if (resp.ok) {
-          setPurchases(await resp.json());
-        }
-      } catch (err) {
-        console.error('Failed to fetch purchases');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchPurchases();
-  }, []);
-
-  if (loading) return <div className="py-20 text-center"><Zap className="animate-spin inline-block text-indigo-600" size={32} /></div>;
-
-  return (
-    <div className="space-y-12">
-      <div className="flex justify-between items-center px-4 md:px-0">
-        <div>
-           <h2 className="text-3xl font-black tracking-tight">Produk Saya</h2>
-           <p className="text-gray-500 font-medium">Akses unduhan dan lisensi produk yang telah Anda beli.</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 px-4 md:px-0">
-        {purchases.map((purchase) => (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            key={purchase.id} 
-            className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col group hover:shadow-xl transition-all duration-500"
-          >
-            <div className="p-10 space-y-6 flex-1">
-              <div className="space-y-4">
-                <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                   <ShoppingBag size={24} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-gray-900 group-hover:text-indigo-600 transition-colors">{purchase.productName}</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">DIBELI PADA {new Date(purchase.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                </div>
-              </div>
-
-              {purchase.licenseKey && (
-                <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100/50 space-y-2">
-                   <div className="flex items-center gap-2 text-indigo-600">
-                      <Key size={14} />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Lisensi Aktif</span>
-                   </div>
-                   <code className="block text-sm font-black text-gray-900 bg-white px-3 py-2 rounded-xl border border-indigo-100 text-center select-all">
-                      {purchase.licenseKey}
-                   </code>
-                </div>
-              )}
-
-              {purchase.downloadToken ? (
-                <div className="space-y-3">
-                   <a 
-                    href={`/api/download/${purchase.downloadToken}`}
-                    className="w-full py-4 bg-gray-900 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-100"
-                   >
-                     <Download size={20} />
-                     Unduh Sekarang
-                   </a>
-                   <p className="text-[10px] text-center text-gray-400 font-medium italic">Link aktif hingga {new Date(purchase.downloadExpiresAt!).toLocaleTimeString('id-ID')}</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                   <button 
-                    disabled
-                    className="w-full py-4 bg-gray-50 text-gray-400 rounded-2xl font-bold flex items-center justify-center gap-2 cursor-not-allowed border border-gray-100"
-                   >
-                     <BookOpen size={20} />
-                     Akses Belajar
-                   </button>
-                   <p className="text-[10px] text-center text-gray-400 font-medium">Akses materi melalui My Dashboard.</p>
-                </div>
-              )}
-            </div>
-            
-            <div className="px-10 py-6 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
-               <span className="text-xs font-bold text-gray-500">#{purchase.id.slice(-8).toUpperCase()}</span>
-               <div className="flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-                  <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">Terverifikasi</span>
-               </div>
-            </div>
-          </motion.div>
-        ))}
-
-        {purchases.length === 0 && (
-          <div className="col-span-full py-32 text-center space-y-6">
-             <div className="w-24 h-24 bg-gray-50 rounded-[2rem] flex items-center justify-center text-gray-200 mx-auto">
-                <ShoppingBag size={48} />
-             </div>
-             <div className="space-y-1">
-                <h3 className="text-xl font-bold text-gray-900">Belum Ada Pembelian</h3>
-                <p className="text-gray-500">Mulai belanja untuk melihat koleksi produk digital Anda di sini.</p>
-             </div>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 

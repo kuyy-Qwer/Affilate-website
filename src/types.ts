@@ -3,7 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export interface SwipeFile {
+  title: string;
+  content: string;
+}
+
 export interface ProductModule {
+
   id: string;
   title: string;
   content: string;
@@ -42,8 +48,14 @@ export interface Product {
   downloadUrl?: string;
   isSoftware?: boolean;
   licensePrefix?: string;
+  licensePrefix?: string;
+  marketingKit?: {
+    banners: string[];
+    swipeFiles: SwipeFile[];
+  };
   createdAt: any;
 }
+
 
 export interface AffiliateStats {
   totalClicks: number;
@@ -67,7 +79,9 @@ export interface User {
   emailVerified?: boolean;
   country?: string;
   isIndonesian?: boolean;
+  tier?: 'bronze' | 'gold' | 'diamond';
 }
+
 
 export interface Coupon {
   id: string;

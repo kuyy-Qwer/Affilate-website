@@ -8,6 +8,8 @@ import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 import serviceAccount from './serviceAccountKey.json';
+import { rateLimit } from 'express-rate-limit';
+
 
 // --- Utilities ---
 const generateLicenseKey = (prefix: string = 'DS') => {
@@ -20,13 +22,42 @@ const generateLicenseKey = (prefix: string = 'DS') => {
 
 const generateSecureToken = () => crypto.randomBytes(32).toString('hex');
 
+// Activity Logging Helper
+const logActivity = async (action: string, details: string, req: AuthenticatedRequest) => {
+  try {
+    await db.collection('activityLogs').add({
+      adminId: req.user?.uid || 'system',
+      adminName: req.userProfile?.name || 'Admin',
+      action,
+      details,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      createdAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Logging Error:', err);
+  }
+};
+
+
 
 // Initialize Firebase Admin
+// Supports both local (serviceAccountKey.json) and Railway (FIREBASE_SERVICE_ACCOUNT env var)
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount), 
-    projectId: firebaseConfig.projectId
-  });
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    // Production: service account JSON stored as env var string
+    const serviceAccountEnv = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccountEnv as admin.ServiceAccount),
+      projectId: firebaseConfig.projectId
+    });
+  } else {
+    // Local development: use serviceAccountKey.json file
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
+      projectId: firebaseConfig.projectId
+    });
+  }
 }
 
 const db = admin.firestore();
@@ -186,11 +217,29 @@ const sendConfirmationEmail = async (to: string, productName: string, amount: nu
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || '3000');
 
-  // Stripe Webhook MUST be before express.json() to get raw body
-  app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  // Global Rate Limiting
+  const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per window
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi nanti.' }
+  });
+
+  const authLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 10, // 10 login/register attempts per hour
+    message: { error: 'Batas percobaan login tercapai. Silakan coba lagi dalam 1 jam.' }
+  });
+
+  app.use('/api/', globalLimiter);
+  app.use('/api/webhook', express.raw({ type: 'application/json' })); // Webhook needs raw body
+  
+  app.post('/api/webhook', async (req, res) => {
     const sig = req.headers['stripe-signature'];
+
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
     let event;
@@ -255,11 +304,21 @@ async function startServer() {
 
           if (metadata.affiliateId) {
             const affiliateRef = fs.collection('users').doc(metadata.affiliateId);
+            const affSnap = await affiliateRef.get();
+            const affData = affSnap.data();
+            const newTotalSales = (affData?.totalSales || 0) + 1;
+            
+            let newTier = 'bronze';
+            if (newTotalSales >= 50) newTier = 'diamond';
+            else if (newTotalSales >= 10) newTier = 'gold';
+
             batch.update(affiliateRef, {
               commissionEarned: admin.firestore.FieldValue.increment(parseInt(commission)),
-              totalSales: admin.firestore.FieldValue.increment(1)
+              totalSales: admin.firestore.FieldValue.increment(1),
+              tier: newTier
             });
           }
+
 
           // Also add to user's purchasedProducts array
           const buyerRef = fs.collection('users').doc(buyerId);
@@ -421,10 +480,20 @@ async function startServer() {
       if (referralCode) {
         const affQuery = await fs.collection('users').where('referralCode', '==', referralCode).limit(1).get();
         if (!affQuery.empty) {
-          affiliateId = affQuery.docs[0].id;
-          commission = Math.floor(finalPrice * 0.1);
+          const affDoc = affQuery.docs[0];
+          const affData = affDoc.data();
+          affiliateId = affDoc.id;
+          
+          // Tiered Commission Logic
+          const salesCount = affData.totalSales || 0;
+          let rate = 0.1; // Bronze (Default)
+          if (salesCount >= 50) rate = 0.25; // Diamond
+          else if (salesCount >= 10) rate = 0.15; // Gold
+          
+          commission = Math.floor(finalPrice * rate);
         }
       }
+
 
       // 3. Create Stripe Session
       const stripe = getStripe();
@@ -542,29 +611,62 @@ async function startServer() {
   });
 
   // Admin: Add Product
-  app.post('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
+  app.post('/api/admin/products', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const fs = admin.firestore();
       const docRef = await fs.collection('products').add({
         ...req.body,
         createdAt: new Date().toISOString()
       });
+      await logActivity('ADD_PRODUCT', `Added product: ${req.body.name}`, req);
       res.json({ id: docRef.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
+  // Admin: Bulk Add Products
+  app.post('/api/admin/bulk-products', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const products = z.array(z.object({
+        name: z.string(),
+        price: z.number(),
+        category: z.string(),
+        description: z.string().optional(),
+        image: z.string().optional()
+      })).parse(req.body);
+
+      const batch = db.batch();
+      products.forEach(p => {
+        const ref = db.collection('products').doc();
+        batch.set(ref, {
+          ...p,
+          createdAt: new Date().toISOString(),
+          modules: [],
+          variants: []
+        });
+      });
+
+      await batch.commit();
+      await logActivity('BULK_ADD_PRODUCTS', `Added ${products.length} products via bulk upload`, req);
+      res.json({ success: true, count: products.length });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Admin: Delete Product
-  app.delete('/api/admin/products/:id', authenticate, requireAdmin, async (req, res) => {
+  app.delete('/api/admin/products/:id', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const fs = admin.firestore();
       await fs.collection('products').doc(req.params.id).delete();
+      await logActivity('DELETE_PRODUCT', `Deleted product ID: ${req.params.id}`, req);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
+
 
   // Admin: Add Coupon
   app.post('/api/admin/coupons', authenticate, requireAdmin, async (req, res) => {
@@ -632,18 +734,31 @@ async function startServer() {
   });
 
   // Admin: Update Global Settings
-  app.post('/api/admin/settings', authenticate, requireAdmin, async (req, res) => {
+  app.post('/api/admin/settings', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const fs = admin.firestore();
       await fs.collection('settings').doc('global').set({
         ...req.body,
         id: 'global'
       });
+      await logActivity('UPDATE_SETTINGS', 'Updated global settings/promo', req);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Admin: Fetch Activity Logs
+  app.get('/api/admin/activity-logs', authenticate, requireAdmin, async (req, res) => {
+    try {
+      const logsSnap = await db.collection('activityLogs').orderBy('createdAt', 'desc').limit(100).get();
+      const logs = logsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // Admin: Delete Coupon
   app.delete('/api/admin/coupons/:id', authenticate, requireAdmin, async (req, res) => {
@@ -663,6 +778,27 @@ async function startServer() {
       const usersSnap = await fs.collection('users').orderBy('createdAt', 'desc').get();
       const users = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       res.json(users);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route: Bootstrap first admin (only works if NO admin exists yet)
+  // This is a one-time setup endpoint — once an admin exists, it's permanently disabled
+  app.post('/api/bootstrap-admin', authenticate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      // Check if any admin already exists
+      const adminQuery = await fs.collection('users').where('role', '==', 'admin').limit(1).get();
+      if (!adminQuery.empty) {
+        return res.status(403).json({ error: 'Admin sudah ada. Endpoint ini hanya bisa digunakan sekali.' });
+      }
+      // Promote the requesting user to admin
+      await fs.collection('users').doc(req.user!.uid).update({
+        role: 'admin',
+        updatedAt: new Date().toISOString()
+      });
+      res.json({ success: true, message: 'Akun Anda berhasil dijadikan Admin pertama.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -819,6 +955,68 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // --- ADVANCED FEATURES ---
+
+  // Abandoned Cart Recovery Trigger
+  app.post('/api/admin/recover-carts', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      const oneHourAgo = new Date();
+      oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+      
+      const pendingSales = await fs.collection('sales')
+        .where('paymentStatus', '==', 'pending')
+        .where('createdAt', '<', oneHourAgo.toISOString())
+        .limit(20)
+        .get();
+      
+      let count = 0;
+      for (const doc of pendingSales.docs) {
+        const sale = doc.data();
+        if (!sale.recoveryEmailSent) {
+          // Mock Email Send
+          console.log(`Sending recovery email to ${sale.buyerEmail} for product ${sale.productName}`);
+          await doc.ref.update({ recoveryEmailSent: true });
+          count++;
+        }
+      }
+
+      await logActivity('RECOVER_CARTS', `Triggered manual recovery for ${count} abandoned carts`, req);
+      res.json({ success: true, recovered: count });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Invoice Generation (PDF Mock - returns text or trigger for client-side download)
+  app.get('/api/customer/invoice/:saleId', authenticate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      const saleSnap = await fs.collection('sales').doc(req.params.saleId).get();
+      
+      if (!saleSnap.exists) return res.status(404).send('Invoice not found');
+      const sale = saleSnap.data();
+      
+      if (sale?.buyerId !== req.user!.uid && req.userProfile?.role !== 'admin') {
+        return res.status(403).send('Forbidden');
+      }
+
+      // In a real app, we might use jspdf-node or similar. 
+      // For this implementation, we send the data for the client to generate the PDF.
+      res.json({
+        invoiceNo: `INV-${sale?.id.slice(-8).toUpperCase()}`,
+        date: sale?.createdAt,
+        customer: sale?.buyerEmail,
+        product: sale?.productName,
+        amount: sale?.amount,
+        status: sale?.paymentStatus
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
