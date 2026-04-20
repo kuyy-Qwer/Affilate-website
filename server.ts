@@ -7,7 +7,6 @@ import { z } from 'zod';
 import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
-import serviceAccount from './serviceAccountKey.json';
 import { rateLimit } from 'express-rate-limit';
 
 
@@ -42,22 +41,25 @@ const logActivity = async (action: string, details: string, req: AuthenticatedRe
 
 
 // Initialize Firebase Admin
-// Supports both local (serviceAccountKey.json) and Railway (FIREBASE_SERVICE_ACCOUNT env var)
+// Credentials are read from the SERVICE_ACCOUNT_KEY environment variable (JSON string).
+// For local development, fall back to serviceAccountKey.json if the env var is not set.
 if (!admin.apps.length) {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // Production: service account JSON stored as env var string
-    const serviceAccountEnv = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccountEnv as admin.ServiceAccount),
-      projectId: firebaseConfig.projectId
-    });
+  const serviceAccountJson = process.env.SERVICE_ACCOUNT_KEY;
+  let serviceAccountCredential: admin.ServiceAccount;
+
+  if (serviceAccountJson) {
+    // Production / Railway: parse credentials from environment variable
+    serviceAccountCredential = JSON.parse(serviceAccountJson) as admin.ServiceAccount;
   } else {
-    // Local development: use serviceAccountKey.json file
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
-      projectId: firebaseConfig.projectId
-    });
+    // Local development: load credentials from file at runtime (not a static import)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    serviceAccountCredential = require('./serviceAccountKey.json') as admin.ServiceAccount;
   }
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccountCredential),
+    projectId: firebaseConfig.projectId
+  });
 }
 
 const db = admin.firestore();
