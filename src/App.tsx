@@ -813,65 +813,262 @@ export default function App() {
 
 function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPricing: () => void }) {
   return (
-    <div className="space-y-16 md:space-y-32">
-       <div className="flex flex-col md:flex-row gap-12 items-center">
-        <div className="flex-1 space-y-6 md:space-y-8 text-center md:text-left">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] rounded-full text-[10px] md:text-xs font-bold uppercase tracking-wider border border-[#2FA084]/30">
-            <Star size={14} /> Solusi Digital Terbaik
+    <div className="space-y-20 md:space-y-32">
+       {/* Hero Section - Enhanced */}
+       <div className="relative overflow-hidden">
+         {/* Background Decorations */}
+         <div className="absolute inset-0 -z-10">
+           <div className="absolute top-20 left-10 w-72 h-72 bg-[#6FCF97] opacity-10 dark:opacity-5 blur-3xl rounded-full"></div>
+           <div className="absolute bottom-20 right-10 w-96 h-96 bg-[#2FA084] opacity-10 dark:opacity-5 blur-3xl rounded-full"></div>
+         </div>
+
+         <div className="flex flex-col md:flex-row gap-12 md:gap-16 items-center py-8 md:py-16">
+          <div className="flex-1 space-y-6 md:space-y-8 text-center md:text-left">
+            {/* Badge */}
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] rounded-full text-xs md:text-sm font-bold uppercase tracking-wider border border-[#2FA084]/30 shadow-sm"
+            >
+              <Star size={16} className="animate-pulse" /> 
+              Platform Afiliasi #1 di Indonesia
+            </motion.div>
+
+            {/* Main Heading */}
+            <motion.h1 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter leading-[0.9] text-gray-900 dark:text-white"
+            >
+              Raih Passive <br className="hidden md:block" /> 
+              Income dengan <br className="hidden md:block" /> 
+              <span className="bg-gradient-to-r from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] bg-clip-text text-transparent animate-gradient">
+                Afiliasi Digital
+              </span>
+            </motion.h1>
+
+            {/* Subheading */}
+            <motion.p 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="text-lg md:text-xl lg:text-2xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto md:mx-0 leading-relaxed"
+            >
+              Bergabung dengan <span className="font-bold text-[#1F6F5F] dark:text-[#6FCF97]">1000+ affiliate</span> yang sudah menghasilkan jutaan rupiah. 
+              Komisi hingga <span className="font-bold text-[#1F6F5F] dark:text-[#6FCF97]">30%</span> untuk setiap penjualan!
+            </motion.p>
+
+            {/* Stats */}
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="flex flex-wrap gap-6 md:gap-8 justify-center md:justify-start"
+            >
+              <div className="text-center md:text-left">
+                <div className="text-3xl md:text-4xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">30%</div>
+                <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Komisi Maksimal</div>
+              </div>
+              <div className="text-center md:text-left">
+                <div className="text-3xl md:text-4xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">1000+</div>
+                <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Affiliate Aktif</div>
+              </div>
+              <div className="text-center md:text-left">
+                <div className="text-3xl md:text-4xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">24/7</div>
+                <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Support Ready</div>
+              </div>
+            </motion.div>
+
+            {/* CTA Buttons */}
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+              className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start pt-4"
+            >
+              <button 
+                onClick={onStart}
+                className="group bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-8 py-5 rounded-2xl font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-2xl hover:shadow-[#2FA084]/40 transition-all flex items-center justify-center gap-3 text-lg"
+              >
+                Mulai Sekarang 
+                <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
+              </button>
+              <button 
+                onClick={onViewPricing}
+                className="border-2 border-gray-200 dark:border-gray-700 px-8 py-5 rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-[#2FA084] dark:hover:border-[#6FCF97] transition-all flex items-center justify-center text-lg"
+              >
+                Lihat Paket Tier
+              </button>
+            </motion.div>
+
+            {/* Trust Badges */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              className="flex flex-wrap items-center gap-4 justify-center md:justify-start pt-6 text-xs text-gray-500 dark:text-gray-400"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} className="text-[#2FA084]" />
+                <span>Aman & Terpercaya</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Zap size={16} className="text-[#2FA084]" />
+                <span>Instant Payout</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle size={16} className="text-[#2FA084]" />
+                <span>Verified Platform</span>
+              </div>
+            </motion.div>
           </div>
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.9] text-gray-900 dark:text-white">
-            Kembangkan <br className="hidden md:block" /> Aset Digital <br className="hidden md:block" /> <span className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">Anda Sekarang.</span>
-          </h1>
-          <p className="text-lg md:text-xl text-gray-500 dark:text-gray-400 max-w-lg mx-auto md:mx-0">
-            Akses ribuan produk digital berkualitas tinggi dan sistem afiliasi yang memberikan komisi hingga 50%.
+
+          {/* Hero Image */}
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.3 }}
+            className="flex-1 w-full max-w-2xl"
+          >
+             <div className="relative">
+                {/* Glow Effect */}
+                <div className="absolute -inset-8 bg-gradient-to-r from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] opacity-20 dark:opacity-30 blur-3xl rounded-full animate-pulse"></div>
+                
+                {/* Main Image */}
+                <div className="relative">
+                  <img 
+                    src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=1200&h=800&fit=crop" 
+                    className="relative rounded-[2rem] md:rounded-[3rem] shadow-2xl border-4 border-white/50 dark:border-gray-700/50 w-full" 
+                    referrerPolicy="no-referrer"
+                    alt="Dashboard Preview"
+                  />
+                  
+                  {/* Floating Stats Card */}
+                  <motion.div 
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.6 }}
+                    className="absolute -bottom-6 -left-6 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] rounded-xl flex items-center justify-center">
+                        <TrendingUp size={24} className="text-white" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">+245%</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Growth Rate</div>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* Floating Commission Card */}
+                  <motion.div 
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.7 }}
+                    className="absolute -top-6 -right-6 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gradient-to-br from-[#6FCF97] to-[#2FA084] rounded-xl flex items-center justify-center">
+                        <Wallet size={24} className="text-white" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">Rp 15M+</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Total Komisi</div>
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+             </div>
+          </motion.div>
+        </div>
+      </div>
+
+      {/* Features Section - Enhanced */}
+      <div className="space-y-12">
+        <div className="text-center max-w-3xl mx-auto space-y-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            className="inline-block bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest border border-[#2FA084]/30"
+          >
+            Kenapa Memilih Kami?
+          </motion.div>
+          <h2 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900 dark:text-white">
+            Platform Terlengkap untuk <span className="text-[#1F6F5F] dark:text-[#6FCF97]">Affiliate Marketing</span>
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 text-lg">
+            Semua yang Anda butuhkan untuk sukses sebagai affiliate marketer dalam satu platform
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
-            <button 
-              onClick={onStart}
-              className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-8 py-4 rounded-2xl font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-xl hover:shadow-[#2FA084]/30 transition-all flex items-center justify-center gap-2"
-            >
-              Mulai Belanja <ArrowRight size={20} />
-            </button>
-            <button 
-              onClick={onViewPricing}
-              className="border-2 border-gray-200 dark:border-gray-700 px-8 py-4 rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all flex items-center justify-center"
-            >
-              Lihat Paket
-            </button>
-          </div>
         </div>
-        <div className="flex-1 w-full max-w-xl">
-           <div className="relative">
-              <div className="absolute -inset-4 bg-[#2FA084] opacity-10 dark:opacity-20 blur-3xl rounded-full"></div>
-              <img 
-                src="https://picsum.photos/seed/dashboard/1200/800" 
-                className="relative rounded-[1.5rem] md:rounded-[2.5rem] shadow-2xl border border-white/50 dark:border-gray-700" 
-                referrerPolicy="no-referrer"
-              />
-           </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <FeatureCard 
+            icon={<ShieldCheck className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="Anti-Fraud System" 
+            desc="Sistem keamanan tingkat enterprise dengan deteksi fraud otomatis dan self-referral prevention untuk melindungi integritas program."
+          />
+          <FeatureCard 
+            icon={<Zap className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="Instant Payout" 
+            desc="Diamond tier mendapat instant payout real-time. Gold tier priority 24 jam. Sistem holding period yang transparan dan fair."
+          />
+          <FeatureCard 
+            icon={<TrendingUp className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="Dynamic Cookie Life" 
+            desc="Cookie tracking 30-120 hari berdasarkan tier. Semakin tinggi tier, semakin lama tracking untuk maximize conversion."
+          />
+          <FeatureCard 
+            icon={<BarChart3 className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="Advanced Analytics" 
+            desc="Dashboard analytics lengkap dengan UTM tracking, conversion rate, dan fraud detection untuk optimize performance."
+          />
+          <FeatureCard 
+            icon={<Users className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="5-Tier System" 
+            desc="Dari Starter (5%) hingga Diamond (30%). Auto-upgrade berdasarkan performa dengan benefit yang jelas di setiap level."
+          />
+          <FeatureCard 
+            icon={<CreditIcon className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
+            title="Multiple Payment" 
+            desc="Support QRIS, Virtual Account, E-Wallet, dan Bank Transfer. Pembayaran aman dengan enkripsi tingkat bank."
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <FeatureCard 
-          icon={<ShieldCheck className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
-          title="Keamanan Terjamin" 
-          desc="Setiap transaksi diproses dengan enkripsi tingkat tinggi demi keamanan data Anda."
-        />
-        <FeatureCard 
-          icon={<Zap className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
-          title="Instan Akses" 
-          desc="Produk langsung tersedia di dashboard Anda segera setelah pembayaran dikonfirmasi."
-        />
-        <FeatureCard 
-          icon={<CreditIcon className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
-          title="Pembayaran Mudah" 
-          desc="Mendukung QRIS, Virtual Account, hingga E-Wallet untuk kemudahan transaksi."
-        />
-      </div>
-
+      {/* Pricing Section */}
       <div className="pt-20 border-t border-gray-100 dark:border-gray-800">
         <PricingView />
+      </div>
+
+      {/* CTA Section */}
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] opacity-5 dark:opacity-10"></div>
+        <div className="relative bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] rounded-[3rem] p-12 md:p-20 text-center text-white">
+          <div className="max-w-3xl mx-auto space-y-8">
+            <h2 className="text-3xl md:text-5xl font-black">Siap Mulai Menghasilkan?</h2>
+            <p className="text-lg md:text-xl text-white/90">
+              Bergabung sekarang dan dapatkan akses ke platform afiliasi terbaik. 
+              Gratis untuk memulai, tanpa biaya tersembunyi.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+              <button 
+                onClick={onStart}
+                className="bg-white text-[#1F6F5F] px-10 py-5 rounded-2xl font-bold hover:bg-[#6FCF97] hover:text-white transition-all text-lg shadow-2xl"
+              >
+                Daftar Gratis Sekarang
+              </button>
+              <button 
+                onClick={onViewPricing}
+                className="border-2 border-white/30 backdrop-blur-sm px-10 py-5 rounded-2xl font-bold hover:bg-white/10 transition-all text-lg"
+              >
+                Pelajari Lebih Lanjut
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
