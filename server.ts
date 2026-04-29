@@ -8,6 +8,7 @@ import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 import { rateLimit } from 'express-rate-limit';
+import fs from 'fs';
 
 
 // --- Utilities ---
@@ -21,7 +22,9 @@ const generateLicenseKey = (prefix: string = 'DS') => {
 
 const generateSecureToken = () => crypto.randomBytes(32).toString('hex');
 
-// Activity Logging Helper
+// Activity Logging Helper (will be initialized after db)
+let db: admin.firestore.Firestore;
+
 const logActivity = async (action: string, details: string, req: AuthenticatedRequest) => {
   try {
     await db.collection('activityLogs').add({
@@ -41,27 +44,51 @@ const logActivity = async (action: string, details: string, req: AuthenticatedRe
 
 
 // Initialize Firebase Admin
-// Credentials must be provided via the SERVICE_ACCOUNT_KEY environment variable (JSON string).
-// In Railway: set SERVICE_ACCOUNT_KEY to the contents of your Firebase service account JSON file.
+// Supports both local (serviceAccountKey.json) and Railway (SERVICE_ACCOUNT_KEY env var)
 if (!admin.apps.length) {
-  const serviceAccountJson = process.env.SERVICE_ACCOUNT_KEY;
-
-  if (!serviceAccountJson) {
-    throw new Error(
-      'Missing SERVICE_ACCOUNT_KEY environment variable. ' +
-      'Please set it in your Railway project variables with the contents of your Firebase service account JSON file.'
-    );
+  if (process.env.SERVICE_ACCOUNT_KEY) {
+    // Production: service account JSON stored as env var string
+    console.log('🔧 Initializing Firebase with SERVICE_ACCOUNT_KEY environment variable...');
+    const serviceAccountCredential = JSON.parse(process.env.SERVICE_ACCOUNT_KEY) as admin.ServiceAccount;
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccountCredential),
+      projectId: firebaseConfig.projectId
+    });
+    console.log('✅ Firebase initialized successfully (production mode)');
+  } else {
+    // Local development: use serviceAccountKey.json file
+    console.log('🔧 Initializing Firebase with serviceAccountKey.json file...');
+    try {
+      const serviceAccountPath = path.join(process.cwd(), 'serviceAccountKey.json');
+      
+      if (fs.existsSync(serviceAccountPath)) {
+        const serviceAccountData = fs.readFileSync(serviceAccountPath, 'utf8');
+        const serviceAccount = JSON.parse(serviceAccountData) as admin.ServiceAccount;
+        
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+          projectId: firebaseConfig.projectId
+        });
+        console.log('✅ Firebase initialized successfully (local development mode)');
+      } else {
+        throw new Error('serviceAccountKey.json not found in project root');
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to initialize Firebase:', error.message);
+      console.error('\n📝 Setup Instructions:');
+      console.error('   For local development:');
+      console.error('   1. Download your Firebase service account key from Firebase Console');
+      console.error('   2. Save it as "serviceAccountKey.json" in the project root');
+      console.error('   3. Make sure the file is in .gitignore\n');
+      console.error('   For production (Railway):');
+      console.error('   1. Set SERVICE_ACCOUNT_KEY environment variable');
+      console.error('   2. Value should be the entire JSON content of your service account key\n');
+      throw error;
+    }
   }
-
-  const serviceAccountCredential = JSON.parse(serviceAccountJson) as admin.ServiceAccount;
-
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccountCredential),
-    projectId: firebaseConfig.projectId
-  });
 }
 
-const db = admin.firestore();
+db = admin.firestore();
 
 // Late initialize Stripe
 let stripeClient: Stripe | null = null;
