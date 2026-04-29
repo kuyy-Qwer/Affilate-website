@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, setDoc } from 'firebase/firestore';
-import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig, Sale } from '../types';
+import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig, Sale, SwipeFile } from '../types';
 import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search, History, FileUp } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import Papa from 'papaparse';
@@ -85,6 +85,7 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
   const [allSales, setAllSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
@@ -201,8 +202,9 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       const querySnapshot = await getDocs(q);
       const docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(docs);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setFetchError('Gagal memuat produk: ' + (err.message || 'Terjadi kesalahan'));
     }
   };
 
@@ -216,7 +218,7 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       setUsers(data);
     } catch (err: any) {
       console.error('Fetch Users Error:', err);
-      alert('Error fetching users: ' + err.message);
+      setFetchError('Gagal memuat pengguna: ' + err.message);
     }
   };
 
@@ -225,8 +227,9 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       const q = query(collection(db, 'coupons'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
       setCoupons(snap.docs.map(d => ({ id: d.id, ...d.data() } as Coupon)));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setFetchError('Gagal memuat kupon: ' + (err.message || 'Terjadi kesalahan'));
     }
   };
 
@@ -235,8 +238,9 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       const q = query(collection(db, 'withdrawals'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
       setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithdrawalRequest)));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setFetchError('Gagal memuat pencairan: ' + (err.message || 'Terjadi kesalahan'));
     }
   };
 
@@ -245,24 +249,31 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       const resp = await fetch('/api/admin/sales', {
         headers: await getAuthHeaders()
       });
+      if (!resp.ok) throw new Error('Server error: ' + resp.status);
       const data = await resp.json();
       setAllSales(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setFetchError('Gagal memuat penjualan: ' + (err.message || 'Terjadi kesalahan'));
     }
   };
 
   const fetchActivityLogs = async () => {
     try {
       const resp = await fetch('/api/admin/activity-logs', { headers: await getAuthHeaders() });
+      if (!resp.ok) throw new Error('Server error: ' + resp.status);
       const data = await resp.json();
       setActivityLogs(data);
-    } catch (err) { console.error(err); }
+    } catch (err: any) {
+      console.error(err);
+      setFetchError('Gagal memuat log aktivitas: ' + (err.message || 'Terjadi kesalahan'));
+    }
   };
 
   useEffect(() => {
     const init = async () => {
       setLoading(true);
+      setFetchError(null);
       await Promise.all([
         fetchProducts(), 
         fetchUsers(), 
@@ -423,7 +434,20 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
 
       });
       if (resp.ok) {
-        setNewProduct({ name: '', description: '', price: 0, category: '', image: 'https://picsum.photos/seed/tool/800/600', downloadUrl: '', isSoftware: false, licensePrefix: '' });
+        setNewProduct({ 
+          name: '', 
+          description: '', 
+          price: 0, 
+          category: '', 
+          image: 'https://picsum.photos/seed/tool/800/600', 
+          downloadUrl: '', 
+          isSoftware: false, 
+          licensePrefix: '',
+          marketingKit: {
+            banners: [],
+            swipeFiles: []
+          }
+        });
         fetchProducts();
       } else {
         const err = await resp.json();
@@ -454,61 +478,73 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
 
   return (
     <div className="space-y-12">
+      {/* Error Banner */}
+      {fetchError && (
+        <div className="flex items-center justify-between gap-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 rounded-2xl text-red-700 dark:text-red-400 text-sm font-medium">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="flex-shrink-0" />
+            {fetchError}
+          </div>
+          <button onClick={() => setFetchError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+            <XCircle size={16} />
+          </button>
+        </div>
+      )}
       {/* Tab Switcher */}
       <div className="overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 scrollbar-hide">
-        <div className="flex gap-2 md:gap-4 p-1 bg-gray-100 rounded-2xl w-fit whitespace-nowrap">
+        <div className="flex gap-2 md:gap-3 p-1.5 bg-gradient-to-r from-gray-50 to-gray-100 rounded-2xl w-fit whitespace-nowrap border border-gray-200 shadow-sm">
           <button 
             onClick={() => setActiveSubTab('products')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'products' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'products' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <Package size={16} className="md:w-[18px] md:h-[18px]" /> Produk
           </button>
           <button 
             onClick={() => setActiveSubTab('users')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'users' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'users' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <Users size={16} className="md:w-[18px] md:h-[18px]" /> Pengguna
           </button>
           <button 
             onClick={() => setActiveSubTab('coupons')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'coupons' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'coupons' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <Ticket size={16} className="md:w-[18px] md:h-[18px]" /> Kupon
           </button>
           <button 
             onClick={() => setActiveSubTab('withdrawals')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'withdrawals' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'withdrawals' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <Wallet size={16} className="md:w-[18px] md:h-[18px]" /> Pencairan
           </button>
           <button 
             onClick={() => setActiveSubTab('events')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'events' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <Zap size={16} className="md:w-[18px] md:h-[18px]" /> Event
           </button>
           <button 
             onClick={() => setActiveSubTab('sales')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'sales' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'sales' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <ShoppingBag size={16} className="md:w-[18px] md:h-[18px]" /> Penjualan
           </button>
           <button 
             onClick={() => setActiveSubTab('logs')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-2 md:py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all ${
-              activeSubTab === 'logs' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'logs' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
             }`}
           >
             <History size={16} className="md:w-[18px] md:h-[18px]" /> Audit Log
@@ -519,19 +555,22 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
 
       {activeSubTab === 'products' ? (
         <>
-          <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-sm">
+          <div className="bg-white dark:bg-gray-800 p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 dark:border-gray-700 shadow-lg transition-colors duration-200">
             <div className="flex items-center justify-between mb-6 md:mb-8">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                <div className="w-12 h-12 bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-[#2FA084]/30">
                   <Plus size={24} />
                 </div>
-                <h2 className="text-xl md:text-2xl font-bold">Tambah Produk</h2>
+                <div>
+                  <h2 className="text-xl md:text-2xl font-black bg-gradient-to-r from-gray-900 dark:from-white to-gray-600 dark:to-gray-300 bg-clip-text text-transparent">Tambah Produk</h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5">Buat produk digital baru untuk dijual</p>
+                </div>
               </div>
               
               <div className="flex gap-2">
-                <label className={`flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold cursor-pointer hover:bg-gray-100 transition-all ${isBulkUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <FileUp size={18} className="text-indigo-600" />
-                  {isBulkUploading ? 'Uploading...' : 'Bulk Upload (CSV)'}
+                <label className={`flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#6FCF97]/30 to-[#2FA084]/30 border border-[#2FA084]/50 rounded-xl text-sm font-black cursor-pointer hover:from-[#6FCF97]/40 hover:to-[#2FA084]/40 transition-all ${isBulkUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <FileUp size={18} className="text-[#1F6F5F]" />
+                  {isBulkUploading ? 'Uploading...' : 'Bulk Upload CSV'}
                   <input 
                     type="file" 
                     accept=".csv" 
@@ -655,8 +694,8 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                   placeholder="Deskripsi singkat produk..." 
                 />
               </div>
-              <button type="submit" className="md:col-span-2 py-4 bg-gray-900 text-white rounded-2xl font-bold hover:bg-indigo-600 transition-all">
-                Simpan Produk
+              <button type="submit" className="md:col-span-2 py-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-2xl font-black hover:from-[#2FA084] hover:to-[#6FCF97] transition-all shadow-lg shadow-[#2FA084]/30">
+                Simpan Produk Baru
               </button>
             </form>
 

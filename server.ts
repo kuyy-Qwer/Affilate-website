@@ -220,6 +220,16 @@ async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || '3000');
 
+  // Validate required environment variables in production
+  if (process.env.NODE_ENV === 'production') {
+    const required = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length > 0) {
+      console.error(`[FATAL] Missing required environment variables: ${missing.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
   // Global Rate Limiting
   const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -237,6 +247,11 @@ async function startServer() {
 
   app.use('/api/', globalLimiter);
   app.use('/api/webhook', express.raw({ type: 'application/json' })); // Webhook needs raw body
+
+  // Health check endpoint — digunakan Railway untuk monitoring
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
   
   app.post('/api/webhook', async (req, res) => {
     const sig = req.headers['stripe-signature'];
@@ -309,9 +324,37 @@ async function startServer() {
             const affData = affSnap.data();
             const newTotalSales = (affData?.totalSales || 0) + 1;
             
-            let newTier = 'bronze';
-            if (newTotalSales >= 50) newTier = 'diamond';
-            else if (newTotalSales >= 10) newTier = 'gold';
+            // Dynamic Tier Auto-Upgrade Logic
+            let newTier = affData?.tier || 'starter';
+            let payoutHoldingDays = 14; // Default
+            
+            // Fetch all active tiers sorted by order
+            const tiersSnap = await fs.collection('tiers')
+              .where('isActive', '==', true)
+              .orderBy('order', 'desc')
+              .get();
+            
+            // Find the highest tier the user qualifies for
+            for (const tierDoc of tiersSnap.docs) {
+              const tierData = tierDoc.data();
+              if (newTotalSales >= tierData.minSales) {
+                if (tierData.maxSales === null || newTotalSales <= tierData.maxSales) {
+                  newTier = tierDoc.id;
+                  payoutHoldingDays = tierData.payoutHoldingDays || 14;
+                  break;
+                }
+              }
+            }
+            
+            // Calculate when commission becomes available
+            const commissionAvailableAt = new Date();
+            commissionAvailableAt.setDate(commissionAvailableAt.getDate() + payoutHoldingDays);
+
+            // Update sale with commission status
+            await saleRef.update({
+              commissionStatus: 'held',
+              commissionAvailableAt: commissionAvailableAt.toISOString()
+            });
 
             batch.update(affiliateRef, {
               commissionEarned: admin.firestore.FieldValue.increment(parseInt(commission)),
@@ -373,11 +416,48 @@ async function startServer() {
         return res.status(404).send('File tidak ditemukan.');
       }
 
-      // In a real app, you might use a redirect to a signed S3 URL
-      // For now, we redirect to the downloadUrl
+      // Redirect ke downloadUrl — di production sebaiknya gunakan signed URL (S3/GCS)
+      // Pastikan URL valid sebelum redirect
+      try {
+        new URL(product.downloadUrl); // validasi URL
+      } catch {
+        return res.status(500).send('URL unduhan tidak valid.');
+      }
       res.redirect(product.downloadUrl);
     } catch (err: any) {
       res.status(500).send('Terjadi kesalahan internal.');
+    }
+  });
+
+  // API Route: Affiliate Stats (aggregated, efficient)
+  app.get('/api/affiliate/stats', authenticate, requireAffiliate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      const affiliateId = req.user!.uid;
+
+      // Ambil data user langsung dari Firestore (sudah teragregasi)
+      const userSnap = await fs.collection('users').doc(affiliateId).get();
+      if (!userSnap.exists) return res.status(404).json({ error: 'User not found' });
+      const userData = userSnap.data()!;
+
+      // Hitung pending withdrawals untuk saldo tersedia
+      const pendingWithdrawals = await fs.collection('withdrawals')
+        .where('userId', '==', affiliateId)
+        .where('status', '==', 'pending')
+        .get();
+      const pendingTotal = pendingWithdrawals.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+
+      res.json({
+        totalClicks: userData.totalClicks || 0,
+        totalSales: userData.totalSales || 0,
+        commissionEarned: userData.commissionEarned || 0,
+        availableBalance: (userData.commissionEarned || 0) - pendingTotal,
+        pendingWithdrawals: pendingTotal,
+        tier: userData.tier || 'bronze',
+        referralCode: userData.referralCode || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -454,7 +534,14 @@ async function startServer() {
         if (couponSnap.exists) {
           const coupon = couponSnap.data();
           const now = new Date();
-          const isExpired = coupon?.expiryDate ? new Date(coupon.expiryDate + 'T23:59:59') < now : false;
+          // Parse expiry date robustly: expiryDate is stored as YYYY-MM-DD
+          const isExpired = coupon?.expiryDate
+            ? (() => {
+                const [y, m, d] = coupon.expiryDate.split('-').map(Number);
+                const expiry = new Date(y, m - 1, d, 23, 59, 59, 999);
+                return expiry < now;
+              })()
+            : false;
 
           if (coupon?.isActive && !isExpired) {
             const userUsageSnap = await fs.collection('sales')
@@ -478,6 +565,8 @@ async function startServer() {
 
       let affiliateId = null;
       let commission = 0;
+      let isSelfReferral = false;
+      
       if (referralCode) {
         const affQuery = await fs.collection('users').where('referralCode', '==', referralCode).limit(1).get();
         if (!affQuery.empty) {
@@ -485,13 +574,65 @@ async function startServer() {
           const affData = affDoc.data();
           affiliateId = affDoc.id;
           
-          // Tiered Commission Logic
-          const salesCount = affData.totalSales || 0;
-          let rate = 0.1; // Bronze (Default)
-          if (salesCount >= 50) rate = 0.25; // Diamond
-          else if (salesCount >= 10) rate = 0.15; // Gold
+          // Get affiliate config for self-referral check
+          const affiliateConfigSnap = await fs.collection('settings').doc('affiliate_config').get();
+          const affiliateConfig = affiliateConfigSnap.exists ? affiliateConfigSnap.data() : null;
           
-          commission = Math.floor(finalPrice * rate);
+          // Self-Referral Prevention
+          if (affiliateConfig?.selfReferralBlocked && affiliateId === buyerId) {
+            console.warn(`[FRAUD] Self-referral detected: User ${buyerId} trying to use own referral code`);
+            isSelfReferral = true;
+            
+            // Log fraud alert
+            await fs.collection('fraud_alerts').add({
+              type: 'self_referral',
+              severity: 'high',
+              userId: buyerId,
+              affiliateId: affiliateId,
+              description: `User ${buyerEmail} attempted to purchase using their own referral code`,
+              status: 'pending',
+              createdAt: new Date().toISOString()
+            });
+            
+            // Block commission but allow purchase
+            affiliateId = null;
+            commission = 0;
+          } else {
+            // Dynamic Tiered Commission Logic
+            const userTierName = affData.tier || 'starter';
+            
+            // Check for product-specific commission override
+            let rate = 0.05; // Default starter rate
+            
+            if (product?.commissionOverride?.enabled) {
+              // Product has commission override
+              if (product.commissionOverride.tierSpecific && product.commissionOverride.tierSpecific[userTierName]) {
+                rate = product.commissionOverride.tierSpecific[userTierName];
+              } else if (product.commissionOverride.rate) {
+                rate = product.commissionOverride.rate;
+              }
+            } else {
+              // Fetch tier from Firestore
+              const tierSnap = await fs.collection('tiers').doc(userTierName).get();
+              if (tierSnap.exists) {
+                const tierData = tierSnap.data();
+                rate = tierData?.commissionRate || 0.05;
+              }
+            }
+            
+            commission = Math.floor(finalPrice * rate);
+            
+            // Check for promotion bonus
+            if (product?.promotionBonus?.enabled) {
+              const now = new Date();
+              const start = new Date(product.promotionBonus.startDate);
+              const end = new Date(product.promotionBonus.endDate);
+              if (now >= start && now <= end) {
+                const bonusAmount = Math.floor(finalPrice * product.promotionBonus.bonusRate);
+                commission += bonusAmount;
+              }
+            }
+          }
         }
       }
 
@@ -540,14 +681,82 @@ async function startServer() {
     try {
       const { referralCode } = clickSchema.parse(req.body);
       const fs = admin.firestore();
+      
+      // Get IP address
+      const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
+                       req.socket.remoteAddress || 
+                       'unknown';
+      
+      // Get affiliate config for fraud detection
+      const configSnap = await fs.collection('settings').doc('affiliate_config').get();
+      const config = configSnap.exists ? configSnap.data() : null;
+      
+      // Check rate limiting (clicks per IP per hour)
+      if (config?.fraudDetectionEnabled && config?.maxClicksPerIpPerHour) {
+        const oneHourAgo = new Date();
+        oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+        
+        const recentClicksSnap = await fs.collection('clicks')
+          .where('ipAddress', '==', ipAddress)
+          .where('timestamp', '>=', oneHourAgo.toISOString())
+          .get();
+        
+        if (recentClicksSnap.size >= config.maxClicksPerIpPerHour) {
+          console.warn(`[FRAUD] IP ${ipAddress} exceeded click limit: ${recentClicksSnap.size} clicks in 1 hour`);
+          
+          // Log fraud alert
+          await fs.collection('fraud_alerts').add({
+            type: 'click_spam',
+            severity: 'medium',
+            description: `IP ${ipAddress} exceeded ${config.maxClicksPerIpPerHour} clicks per hour`,
+            ipAddress,
+            referralCode,
+            status: 'pending',
+            createdAt: new Date().toISOString()
+          });
+          
+          return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+        }
+      }
+      
       const userQuery = await fs.collection('users').where('referralCode', '==', referralCode).limit(1).get();
       
       if (!userQuery.empty) {
         const userDoc = userQuery.docs[0];
+        const affiliateData = userDoc.data();
+        
+        // Get tier for cookie expiration
+        const tierSnap = await fs.collection('tiers').doc(affiliateData.tier || 'starter').get();
+        const tierData = tierSnap.exists ? tierSnap.data() : null;
+        const cookieLifeDays = tierData?.cookieLifeDays || config?.defaultCookieLifeDays || 30;
+        
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + cookieLifeDays);
+        
+        // Store click with enhanced tracking
+        await fs.collection('clicks').add({
+          affiliateId: userDoc.id,
+          referralCode,
+          ipAddress,
+          userAgent: req.get('User-Agent') || 'unknown',
+          timestamp: new Date().toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          converted: false,
+          landingPage: req.body.landingPage || '/',
+          source: req.body.source || 'direct',
+          medium: req.body.medium || 'referral',
+          campaign: req.body.campaign || 'default'
+        });
+        
         await fs.collection('users').doc(userDoc.id).update({
           totalClicks: admin.firestore.FieldValue.increment(1)
         });
-        return res.json({ success: true });
+        
+        return res.json({ 
+          success: true,
+          cookieLifeDays,
+          expiresAt: expiresAt.toISOString()
+        });
       }
       res.status(404).json({ error: 'Affiliate not found' });
     } catch (err: any) {
@@ -683,15 +892,51 @@ async function startServer() {
     }
   });
 
-  // Admin: Process Withdrawal
-  app.post('/api/admin/withdrawals/:id/process', authenticate, requireAdmin, async (req, res) => {
+  // Admin: Process Withdrawal — dengan refund otomatis jika ditolak
+  app.post('/api/admin/withdrawals/:id/process', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const { status } = req.body;
+      if (!['approved', 'rejected', 'completed'].includes(status)) {
+        return res.status(400).json({ error: 'Status tidak valid' });
+      }
+
       const fs = admin.firestore();
-      await fs.collection('withdrawals').doc(req.params.id).update({
-        status,
-        processedAt: new Date().toISOString()
-      });
+      const withdrawalRef = fs.collection('withdrawals').doc(req.params.id);
+      const withdrawalSnap = await withdrawalRef.get();
+
+      if (!withdrawalSnap.exists) {
+        return res.status(404).json({ error: 'Permintaan pencairan tidak ditemukan' });
+      }
+
+      const withdrawal = withdrawalSnap.data()!;
+
+      // Jika ditolak, kembalikan komisi ke affiliate (tidak ada yang dipotong karena komisi tidak dipotong saat request)
+      if (status === 'rejected' && withdrawal.status === 'pending') {
+        await withdrawalRef.update({
+          status,
+          processedAt: new Date().toISOString()
+        });
+        await logActivity('REJECT_WITHDRAWAL', `Rejected withdrawal Rp ${withdrawal.amount} for ${withdrawal.userEmail}`, req);
+      } else if (status === 'completed' && withdrawal.status !== 'completed') {
+        // Potong komisi hanya saat benar-benar selesai dibayar
+        const batch = fs.batch();
+        batch.update(withdrawalRef, {
+          status,
+          processedAt: new Date().toISOString()
+        });
+        batch.update(fs.collection('users').doc(withdrawal.userId), {
+          commissionEarned: admin.firestore.FieldValue.increment(-withdrawal.amount)
+        });
+        await batch.commit();
+        await logActivity('COMPLETE_WITHDRAWAL', `Completed withdrawal Rp ${withdrawal.amount} for ${withdrawal.userEmail} — commission deducted`, req);
+      } else {
+        await withdrawalRef.update({
+          status,
+          processedAt: new Date().toISOString()
+        });
+        await logActivity('PROCESS_WITHDRAWAL', `Set withdrawal status to ${status} for ${withdrawal.userEmail}`, req);
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -699,20 +944,40 @@ async function startServer() {
   });
 
   // Affiliate: Create Withdrawal
+  // Komisi dikunci (locked) saat request dibuat, baru benar-benar dipotong saat admin approve/complete
   app.post('/api/affiliate/withdrawals', authenticate, requireAffiliate, async (req: AuthenticatedRequest, res) => {
     try {
       const fs = admin.firestore();
       const { amount, paymentMethod, paymentDetails } = req.body;
       const user = req.userProfile;
 
-      if (user.commissionEarned < amount) {
-        return res.status(400).json({ error: 'Insufficient balance' });
+      // Validasi input
+      if (!amount || typeof amount !== 'number' || amount <= 0) {
+        return res.status(400).json({ error: 'Nominal pencairan tidak valid' });
+      }
+      if (amount < 50000) {
+        return res.status(400).json({ error: 'Minimal pencairan adalah Rp 50.000' });
+      }
+      if (!paymentMethod || !paymentDetails) {
+        return res.status(400).json({ error: 'Metode dan detail pembayaran wajib diisi' });
+      }
+
+      // Cek saldo tersedia (commissionEarned dikurangi yang masih pending)
+      const pendingWithdrawals = await fs.collection('withdrawals')
+        .where('userId', '==', req.user!.uid)
+        .where('status', '==', 'pending')
+        .get();
+      const pendingTotal = pendingWithdrawals.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+      const availableBalance = (user.commissionEarned || 0) - pendingTotal;
+
+      if (availableBalance < amount) {
+        return res.status(400).json({ 
+          error: `Saldo tersedia tidak mencukupi. Tersedia: Rp ${availableBalance.toLocaleString('id-ID')} (termasuk ${pendingWithdrawals.size} permintaan pending)` 
+        });
       }
 
       const withdrawalRef = fs.collection('withdrawals').doc();
-      const batch = fs.batch();
-
-      batch.set(withdrawalRef, {
+      await withdrawalRef.set({
         userId: req.user!.uid,
         userName: user.name,
         userEmail: user.email,
@@ -723,11 +988,9 @@ async function startServer() {
         createdAt: new Date().toISOString()
       });
 
-      batch.update(fs.collection('users').doc(req.user!.uid), {
-        commissionEarned: admin.firestore.FieldValue.increment(-amount)
-      });
+      // Komisi TIDAK dipotong di sini — dipotong saat admin set status ke 'completed'
+      // Ini mencegah kehilangan komisi jika request ditolak
 
-      await batch.commit();
       res.json({ id: withdrawalRef.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -760,6 +1023,119 @@ async function startServer() {
     }
   });
 
+  // --- TIER MANAGEMENT ENDPOINTS ---
+
+  // Public: Get all active tiers
+  app.get('/api/tiers', async (req, res) => {
+    try {
+      const fs = admin.firestore();
+      const tiersSnap = await fs.collection('tiers')
+        .where('isActive', '==', true)
+        .orderBy('order', 'asc')
+        .get();
+      const tiers = tiersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(tiers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Get all tiers (including inactive)
+  app.get('/api/admin/tiers', authenticate, requireAdmin, async (req, res) => {
+    try {
+      const fs = admin.firestore();
+      const tiersSnap = await fs.collection('tiers').orderBy('order', 'asc').get();
+      const tiers = tiersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(tiers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Create or Update Tier
+  app.post('/api/admin/tiers/:id', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      const tierId = req.params.id;
+      const tierData = req.body;
+      
+      await fs.collection('tiers').doc(tierId).set({
+        ...tierData,
+        id: tierId,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      
+      await logActivity('UPDATE_TIER', `Updated tier: ${tierData.displayName}`, req);
+      res.json({ success: true, id: tierId });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Delete Tier
+  app.delete('/api/admin/tiers/:id', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      await fs.collection('tiers').doc(req.params.id).delete();
+      await logActivity('DELETE_TIER', `Deleted tier ID: ${req.params.id}`, req);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Fetch All Withdrawals
+  app.get('/api/admin/withdrawals', authenticate, requireAdmin, async (req, res) => {
+    try {
+      const fs = admin.firestore();
+      const snap = await fs.collection('withdrawals').orderBy('createdAt', 'desc').get();
+      const withdrawals = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(withdrawals);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Public: Get product marketing kit (untuk affiliates)
+  app.get('/api/products/:id/marketing-kit', authenticate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      const productSnap = await fs.collection('products').doc(req.params.id).get();
+      if (!productSnap.exists) return res.status(404).json({ error: 'Produk tidak ditemukan' });
+      const product = productSnap.data();
+      res.json({
+        productId: req.params.id,
+        productName: product?.name,
+        marketingKit: product?.marketingKit || { banners: [], swipeFiles: [] }
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Customer: Get product modules (hanya untuk pembeli)
+  app.get('/api/products/:id/modules', authenticate, async (req: AuthenticatedRequest, res) => {
+    try {
+      const fs = admin.firestore();
+      // Verifikasi pembelian
+      const userDoc = await fs.collection('users').doc(req.user!.uid).get();
+      const purchasedProducts = userDoc.data()?.purchasedProducts || [];
+      if (!purchasedProducts.includes(req.params.id) && req.userProfile?.role !== 'admin') {
+        return res.status(403).json({ error: 'Anda harus membeli produk ini untuk mengakses modulnya.' });
+      }
+      const productSnap = await fs.collection('products').doc(req.params.id).get();
+      if (!productSnap.exists) return res.status(404).json({ error: 'Produk tidak ditemukan' });
+      const product = productSnap.data();
+      res.json({
+        productId: req.params.id,
+        productName: product?.name,
+        modules: product?.modules || []
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // Admin: Delete Coupon
   app.delete('/api/admin/coupons/:id', authenticate, requireAdmin, async (req, res) => {
@@ -786,7 +1162,7 @@ async function startServer() {
 
   // API Route: Bootstrap first admin (only works if NO admin exists yet)
   // This is a one-time setup endpoint — once an admin exists, it's permanently disabled
-  app.post('/api/bootstrap-admin', authenticate, async (req: AuthenticatedRequest, res) => {
+  app.post('/api/bootstrap-admin', authLimiter, authenticate, async (req: AuthenticatedRequest, res) => {
     try {
       const fs = admin.firestore();
       // Check if any admin already exists
@@ -805,8 +1181,8 @@ async function startServer() {
     }
   });
 
-  // API Route: Update User Role (Admin only)
-  app.post('/api/admin/update-role', authenticate, requireAdmin, async (req, res) => {
+  // API Route: Update User Role (Admin only) — rate limited to prevent abuse
+  app.post('/api/admin/update-role', authLimiter, authenticate, requireAdmin, async (req, res) => {
     try {
       const { userId, newRole } = updateRoleSchema.parse(req.body);
       const fs = admin.firestore();
@@ -976,8 +1352,30 @@ async function startServer() {
       for (const doc of pendingSales.docs) {
         const sale = doc.data();
         if (!sale.recoveryEmailSent) {
-          // Mock Email Send
-          console.log(`Sending recovery email to ${sale.buyerEmail} for product ${sale.productName}`);
+          await sendConfirmationEmail(
+            sale.buyerEmail,
+            sale.productName,
+            sale.amount,
+            undefined
+          );
+          // Kirim email recovery dengan subject berbeda
+          if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST || 'smtp.gmail.com',
+              port: parseInt(process.env.SMTP_PORT || '465'),
+              secure: true,
+              auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+            });
+            await transporter.sendMail({
+              from: `"DigiSell" <${process.env.SMTP_USER}>`,
+              to: sale.buyerEmail,
+              subject: `Pesanan Anda belum selesai — ${sale.productName}`,
+              html: `<p>Halo, Anda meninggalkan produk <strong>${sale.productName}</strong> di keranjang. Selesaikan pembayaran sekarang!</p>
+                     <a href="${process.env.APP_URL || 'http://localhost:3000'}" style="background:#4f46e5;color:white;padding:12px 24px;text-decoration:none;border-radius:10px;font-weight:bold;display:inline-block;">Selesaikan Pembayaran</a>`
+            }).catch(e => console.error('Recovery email error:', e));
+          } else {
+            console.log(`[EMAIL MOCK] Recovery email → ${sale.buyerEmail} for ${sale.productName}`);
+          }
           await doc.ref.update({ recoveryEmailSent: true });
           count++;
         }
@@ -1019,9 +1417,26 @@ async function startServer() {
   });
 
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown — penting untuk Railway agar request tidak terputus saat redeploy
+  const shutdown = (signal: string) => {
+    console.log(`[${signal}] Shutting down gracefully...`);
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
+    // Force exit jika tidak selesai dalam 10 detik
+    setTimeout(() => {
+      console.error('Forced shutdown after timeout.');
+      process.exit(1);
+    }, 10_000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer();

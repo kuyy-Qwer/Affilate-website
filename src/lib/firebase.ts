@@ -1,11 +1,23 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, enableIndexedDbPersistence, connectFirestoreEmulator } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+// Aktifkan emulator hanya saat development (localhost)
+if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+  try {
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099');
+    console.log('[Dev] Firebase Emulators connected');
+  } catch (e) {
+    // Emulator sudah terhubung sebelumnya (hot reload), abaikan error ini
+    console.warn('[Dev] Emulator already connected or not running:', (e as Error).message);
+  }
+}
 
 // Lazy-init analytics only in browser (avoids SSR crash)
 export const getAnalyticsInstance = async () => {

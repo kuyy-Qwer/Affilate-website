@@ -33,7 +33,9 @@ import {
   Mail,
   Loader2,
   Download,
-  Key
+  Key,
+  Shield,
+  Tag
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -43,8 +45,6 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer, 
-  AreaChart, 
-  Area,
   BarChart,
   Bar,
   Legend
@@ -57,7 +57,7 @@ import 'jspdf-autotable';
 
 import { auth, db } from './lib/firebase';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where, addDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { Product, AffiliateStats, User, Sale, Coupon, Review } from './types';
 import Navbar from './components/Navbar';
 import { LoginForm, RegisterForm } from './components/AuthForms';
@@ -78,7 +78,10 @@ export default function App() {
     fetchProducts,
     resendVerificationEmail,
     globalConfig,
-    fetchGlobalConfig
+    fetchGlobalConfig,
+    isDarkMode,
+    tiers,
+    fetchTiers
   } = useStore();
 
   const [runTour, setRunTour] = useState(false);
@@ -102,7 +105,9 @@ export default function App() {
       // 1. Check Expiry
       if (couponData.expiryDate) {
          const now = new Date();
-         const expiry = new Date(couponData.expiryDate + 'T23:59:59');
+         // Parse YYYY-MM-DD secara eksplisit agar tidak terpengaruh timezone
+         const [y, m, d] = couponData.expiryDate.split('-').map(Number);
+         const expiry = new Date(y, m - 1, d, 23, 59, 59, 999);
          if (now > expiry) {
             alert('Kupon ini sudah kedaluwarsa.');
             return;
@@ -166,7 +171,17 @@ export default function App() {
     initAuth();
     fetchProducts();
     fetchGlobalConfig();
+    fetchTiers();
   }, []);
+  
+  // Update dark mode when state changes
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   // Auto-redirect to dashboard when user logs in from any page
   useEffect(() => {
@@ -208,7 +223,14 @@ export default function App() {
   };
 
   const handlePurchase = async () => {
-    if (!user || !purchaseModal.product) return;
+    console.log('[handlePurchase] Starting purchase process');
+    console.log('[handlePurchase] User:', user);
+    console.log('[handlePurchase] Product:', purchaseModal.product);
+    
+    if (!user || !purchaseModal.product) {
+      console.log('[handlePurchase] Missing user or product, aborting');
+      return;
+    }
     
     setIsBuying(true);
     const product = purchaseModal.product;
@@ -216,25 +238,41 @@ export default function App() {
     const referralCode = localStorage.getItem('affiliate_ref');
     const { getAuthHeaders } = useStore.getState();
 
+    console.log('[handlePurchase] Final price:', finalPrice);
+    console.log('[handlePurchase] Referral code:', referralCode);
+    console.log('[handlePurchase] Applied coupon:', appliedCoupon);
+
     try {
+      const headers = await getAuthHeaders();
+      console.log('[handlePurchase] Auth headers:', headers);
+      
+      const requestBody = {
+        productId: product.id,
+        referralCode: referralCode,
+        couponId: appliedCoupon?.id || null,
+        amount: finalPrice
+      };
+      console.log('[handlePurchase] Request body:', requestBody);
+      
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
-        headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          productId: product.id,
-          referralCode: referralCode,
-          couponId: appliedCoupon?.id || null,
-          amount: finalPrice
-        })
+        headers: headers,
+        body: JSON.stringify(requestBody)
       });
 
+      console.log('[handlePurchase] Response status:', response.status);
       const resData = await response.json();
+      console.log('[handlePurchase] Response data:', resData);
+      
       if (resData.url) {
+        console.log('[handlePurchase] Redirecting to:', resData.url);
         window.location.href = resData.url;
       } else {
+        console.error('[handlePurchase] No URL in response');
         alert('Gagal membuat sesi pembayaran: ' + (resData.error || 'Unknown error'));
       }
     } catch (err: any) {
+      console.error('[handlePurchase] Error:', err);
       alert('Error transaksi: ' + err.message);
     } finally {
       setIsBuying(false);
@@ -357,6 +395,8 @@ export default function App() {
         return <AuthWrapper type="register" setTab={setActiveTab} />;
       case 'features':
         return <FeaturesView />;
+      case 'about':
+        return <AboutView />;
       default:
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
     }
@@ -429,6 +469,8 @@ export default function App() {
         return <WishlistView products={products} user={user!} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} getDiscountedPrice={getDiscountedPrice} />;
       case 'profile':
         return <UserProfile />;
+      case 'about':
+        return <AboutView />;
       case 'admin':
       case 'admin-products':
         return user?.role === 'admin' ? <AdminDashboard defaultTab="products" /> : <div className="text-center py-20 text-gray-500">Akses Ditolak</div>;
@@ -451,15 +493,15 @@ export default function App() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Zap className="animate-pulse text-indigo-600" size={48} />
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <Zap className="animate-pulse text-[#2FA084]" size={48} />
       </div>
     );
   }
 
   return (
     <HelmetProvider>
-      <div className="min-h-screen bg-[#F9FAFB] font-sans text-gray-900">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100 transition-colors duration-200">
         <Helmet>
           <title>DigiSell | Marketplace Produk Digital & Afiliasi</title>
           <meta name="description" content="Platform modern untuk jual beli produk digital dan program afiliasi dengan komisi tinggi." />
@@ -508,23 +550,23 @@ export default function App() {
                  initial={{ opacity: 0, scale: 0.9 }}
                  animate={{ opacity: 1, scale: 1 }}
                  exit={{ opacity: 0, scale: 0.9 }}
-                 className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative shadow-2xl"
+                 className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-[2.5rem] p-10 space-y-8 relative shadow-2xl"
               >
-                 <button onClick={() => { setPurchaseModal({ isOpen: false, product: null }); setAppliedCoupon(null); setCouponCode(''); }} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                 <button onClick={() => { setPurchaseModal({ isOpen: false, product: null }); setAppliedCoupon(null); setCouponCode(''); }} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                    <X size={24} />
                  </button>
                  
                  <div className="space-y-2">
-                   <h3 className="text-3xl font-black tracking-tight">Checkout</h3>
-                   <p className="text-gray-500 font-medium">Selesaikan transaksi untuk mengakses produk ini.</p>
+                   <h3 className="text-3xl font-black tracking-tight text-gray-900 dark:text-white">Checkout</h3>
+                   <p className="text-gray-500 dark:text-gray-400 font-medium">Selesaikan transaksi untuk mengakses produk ini.</p>
                  </div>
 
-                 <div className="flex gap-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                 <div className="flex gap-4 p-6 bg-gray-50 dark:bg-gray-700/50 rounded-3xl border border-gray-100 dark:border-gray-600">
                     <img src={purchaseModal.product.image} className="w-20 h-20 rounded-2xl object-cover shadow-sm" referrerPolicy="no-referrer" />
                     <div className="flex-1 space-y-1">
-                      <p className="font-black text-gray-900 line-clamp-1">{purchaseModal.product.name}</p>
+                      <p className="font-black text-gray-900 dark:text-white line-clamp-1">{purchaseModal.product.name}</p>
                       <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{purchaseModal.product.category}</p>
-                      <p className="text-lg font-black text-indigo-600">Rp {purchaseModal.product.price.toLocaleString('id-ID')}</p>
+                      <p className="text-lg font-black text-[#1F6F5F] dark:text-[#6FCF97]">Rp {purchaseModal.product.price.toLocaleString('id-ID')}</p>
                     </div>
                  </div>
 
@@ -534,15 +576,15 @@ export default function App() {
                         value={couponCode}
                         onChange={e => setCouponCode(e.target.value.toUpperCase())}
                         placeholder="Punya Kode Kupon?"
-                        className="flex-1 px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm"
+                        className="flex-1 px-5 py-4 bg-gray-50 dark:bg-gray-700 border border-gray-100 dark:border-gray-600 rounded-2xl outline-none focus:ring-2 focus:ring-[#2FA084] dark:focus:ring-[#6FCF97] font-bold text-sm text-gray-900 dark:text-white"
                       />
                       <button 
                         onClick={applyCoupon}
-                        className="px-6 py-4 bg-gray-900 text-white rounded-2xl font-bold text-sm hover:bg-gray-800 transition-all"
+                        className="px-6 py-4 bg-gray-900 dark:bg-gray-700 text-white rounded-2xl font-bold text-sm hover:bg-gray-800 dark:hover:bg-gray-600 transition-all"
                       >Terapkan</button>
                     </div>
                     {appliedCoupon && (
-                      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center bg-green-50 px-4 py-2 rounded-xl text-green-700 text-xs font-bold">
+                      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-xl text-green-700 dark:text-green-400 text-xs font-bold border border-green-200 dark:border-green-800">
                          <div className="flex items-center gap-2">
                            <Ticket size={14} />
                            Kupon "{appliedCoupon.code}" Berhasil!
@@ -552,27 +594,27 @@ export default function App() {
                     )}
                  </div>
 
-                 <div className="pt-6 border-t border-gray-100 space-y-4">
-                    <div className="flex justify-between items-center text-sm font-bold text-gray-500">
+                 <div className="pt-6 border-t border-gray-100 dark:border-gray-700 space-y-4">
+                    <div className="flex justify-between items-center text-sm font-bold text-gray-500 dark:text-gray-400">
                       <span>Subtotal</span>
                       <span>Rp {purchaseModal.product.price.toLocaleString('id-ID')}</span>
                     </div>
                     {appliedCoupon && (
-                       <div className="flex justify-between items-center text-sm font-bold text-green-600">
+                       <div className="flex justify-between items-center text-sm font-bold text-green-600 dark:text-green-400">
                           <span>Diskon Kupon</span>
                           <span>- Rp {(purchaseModal.product.price - calculateTotal(purchaseModal.product.price)).toLocaleString('id-ID')}</span>
                        </div>
                     )}
-                    <div className="flex justify-between items-center text-xl font-black text-gray-900">
+                    <div className="flex justify-between items-center text-xl font-black text-gray-900 dark:text-white">
                       <span>Total Bayar</span>
-                      <span className="text-indigo-600">Rp {calculateTotal(purchaseModal.product.price).toLocaleString('id-ID')}</span>
+                      <span className="text-[#1F6F5F] dark:text-[#6FCF97]">Rp {calculateTotal(purchaseModal.product.price).toLocaleString('id-ID')}</span>
                     </div>
                  </div>
 
                  <button 
                    onClick={handlePurchase}
                    disabled={isBuying || !user?.emailVerified}
-                   className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                   className="w-full py-5 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-[#2FA084]/30 hover:from-[#2FA084] hover:to-[#6FCF97] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                  >
                    {isBuying ? <Zap className="animate-spin" size={24} /> : !user?.emailVerified ? (
                      <>
@@ -657,7 +699,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-4xl bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
             >
         <div className="flex flex-col lg:flex-row">
           <div className="lg:w-2/5 relative">
@@ -668,7 +710,7 @@ export default function App() {
                alt={detailModal.product.name}
              />
              <div className="absolute top-4 left-4 md:top-6 md:left-6">
-                <span className="bg-indigo-600 text-white px-3 py-1 md:px-4 md:py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase shadow-lg shadow-indigo-200">
+                <span className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-3 py-1 md:px-4 md:py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase shadow-lg shadow-[#2FA084]/30">
                   {detailModal.product.category}
                 </span>
              </div>
@@ -676,7 +718,7 @@ export default function App() {
           <div className="lg:w-3/5 p-6 md:p-10 space-y-8">
              <div className="flex justify-between items-start">
                 <div className="space-y-1">
-                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-tight">{detailModal.product.name}</h2>
+                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">{detailModal.product.name}</h2>
                    <div className="flex items-center gap-2">
                       <StarRating rating={detailModal.product.averageRating || 0} size={14} />
                       <span className="text-xs font-bold text-gray-400">({detailModal.product.reviewCount || 0} Ulasan)</span>
@@ -684,21 +726,21 @@ export default function App() {
                 </div>
                 <button 
                   onClick={() => setDetailModal({ isOpen: false, product: null })}
-                  className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100"
+                  className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700"
                 >
                   <X size={24} />
                 </button>
              </div>
 
              <div className="space-y-4">
-                <h4 className="font-bold text-gray-900 uppercase text-[10px] md:text-xs tracking-widest">Tentang Produk</h4>
-                <p className="text-gray-600 leading-relaxed text-sm">{detailModal.product.description}</p>
+                <h4 className="font-bold text-gray-900 dark:text-white uppercase text-[10px] md:text-xs tracking-widest">Tentang Produk</h4>
+                <p className="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">{detailModal.product.description}</p>
              </div>
 
-             <div className="pt-6 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-6 sm:gap-4">
+             <div className="pt-6 border-t border-gray-100 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-6 sm:gap-4">
                 <div className="space-y-1">
                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Investasi</p>
-                   <p className="text-2xl md:text-3xl font-black text-indigo-600">
+                   <p className="text-2xl md:text-3xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">
                      <span className="text-sm font-medium mr-1">Rp</span>
                      {detailModal.product.price.toLocaleString('id-ID')}
                    </p>
@@ -708,7 +750,7 @@ export default function App() {
                     setDetailModal({ isOpen: false, product: null });
                     setPurchaseModal({ isOpen: true, product: detailModal.product });
                   }}
-                  className="w-full sm:w-auto px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all border-b-4 border-indigo-800"
+                  className="w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-2xl font-black hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-xl hover:shadow-[#2FA084]/30 transition-all"
                 >
                   Beli Produk Ini
                 </button>
@@ -744,18 +786,18 @@ export default function App() {
 
       <WhatsAppSupport />
       
-      <footer className="bg-white border-t border-gray-100 py-12 mt-20">
+      <footer className="bg-white dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 py-12 mt-20">
         <div className="max-w-7xl mx-auto px-4 text-center">
           <div className="flex items-center justify-center gap-2 mb-4">
-             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+             <div className="w-8 h-8 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold">D</span>
               </div>
-              <span className="font-bold text-xl tracking-tight">DigiSell</span>
+              <span className="font-bold text-xl tracking-tight text-gray-900 dark:text-white">DigiSell</span>
           </div>
           <p className="text-gray-400 text-sm">© 2026 DigiAffiliate Store. Platform Modern Produk Digital.</p>
           <button 
             onClick={() => setRunTour(true)}
-            className="mt-4 text-indigo-600 font-bold hover:underline flex items-center justify-center gap-2 mx-auto"
+            className="mt-4 text-[#1F6F5F] dark:text-[#6FCF97] font-bold hover:underline flex items-center justify-center gap-2 mx-auto"
           >
             <BookOpen size={18} /> Panduan Platform
           </button>
@@ -774,25 +816,25 @@ function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPr
     <div className="space-y-16 md:space-y-32">
        <div className="flex flex-col md:flex-row gap-12 items-center">
         <div className="flex-1 space-y-6 md:space-y-8 text-center md:text-left">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-[10px] md:text-xs font-bold uppercase tracking-wider">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] rounded-full text-[10px] md:text-xs font-bold uppercase tracking-wider border border-[#2FA084]/30">
             <Star size={14} /> Solusi Digital Terbaik
           </div>
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.9] text-gray-900">
-            Kembangkan <br className="hidden md:block" /> Aset Digital <br className="hidden md:block" /> <span className="text-indigo-600">Anda Sekarang.</span>
+          <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.9] text-gray-900 dark:text-white">
+            Kembangkan <br className="hidden md:block" /> Aset Digital <br className="hidden md:block" /> <span className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">Anda Sekarang.</span>
           </h1>
-          <p className="text-lg md:text-xl text-gray-500 max-w-lg mx-auto md:mx-0">
+          <p className="text-lg md:text-xl text-gray-500 dark:text-gray-400 max-w-lg mx-auto md:mx-0">
             Akses ribuan produk digital berkualitas tinggi dan sistem afiliasi yang memberikan komisi hingga 50%.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
             <button 
               onClick={onStart}
-              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold hover:shadow-xl hover:shadow-indigo-100 transition-all flex items-center justify-center gap-2"
+              className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-8 py-4 rounded-2xl font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-xl hover:shadow-[#2FA084]/30 transition-all flex items-center justify-center gap-2"
             >
               Mulai Belanja <ArrowRight size={20} />
             </button>
             <button 
               onClick={onViewPricing}
-              className="border-2 border-gray-200 px-8 py-4 rounded-2xl font-bold hover:bg-gray-50 transition-all flex items-center justify-center"
+              className="border-2 border-gray-200 dark:border-gray-700 px-8 py-4 rounded-2xl font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all flex items-center justify-center"
             >
               Lihat Paket
             </button>
@@ -800,10 +842,10 @@ function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPr
         </div>
         <div className="flex-1 w-full max-w-xl">
            <div className="relative">
-              <div className="absolute -inset-4 bg-indigo-500 opacity-10 blur-3xl rounded-full"></div>
+              <div className="absolute -inset-4 bg-[#2FA084] opacity-10 dark:opacity-20 blur-3xl rounded-full"></div>
               <img 
                 src="https://picsum.photos/seed/dashboard/1200/800" 
-                className="relative rounded-[1.5rem] md:rounded-[2.5rem] shadow-2xl border border-white/50" 
+                className="relative rounded-[1.5rem] md:rounded-[2.5rem] shadow-2xl border border-white/50 dark:border-gray-700" 
                 referrerPolicy="no-referrer"
               />
            </div>
@@ -812,23 +854,23 @@ function LandingPage({ onStart, onViewPricing }: { onStart: () => void, onViewPr
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <FeatureCard 
-          icon={<ShieldCheck className="text-indigo-600" />} 
+          icon={<ShieldCheck className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
           title="Keamanan Terjamin" 
           desc="Setiap transaksi diproses dengan enkripsi tingkat tinggi demi keamanan data Anda."
         />
         <FeatureCard 
-          icon={<Zap className="text-indigo-600" />} 
+          icon={<Zap className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
           title="Instan Akses" 
           desc="Produk langsung tersedia di dashboard Anda segera setelah pembayaran dikonfirmasi."
         />
         <FeatureCard 
-          icon={<CreditIcon className="text-indigo-600" />} 
+          icon={<CreditIcon className="text-[#1F6F5F] dark:text-[#6FCF97]" />} 
           title="Pembayaran Mudah" 
           desc="Mendukung QRIS, Virtual Account, hingga E-Wallet untuk kemudahan transaksi."
         />
       </div>
 
-      <div className="pt-20 border-t border-gray-100">
+      <div className="pt-20 border-t border-gray-100 dark:border-gray-800">
         <PricingView />
       </div>
     </div>
@@ -844,7 +886,7 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      className="bg-white rounded-[2rem] overflow-hidden border border-gray-100 shadow-sm hover:shadow-xl transition-all group relative h-full flex flex-col"
+      className="bg-white dark:bg-gray-800 rounded-[2rem] overflow-hidden border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-xl hover:shadow-[#2FA084]/20 transition-all group relative h-full flex flex-col"
     >
       <div className="h-56 relative overflow-hidden">
           <img 
@@ -865,13 +907,13 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
           <motion.div 
             initial={{ opacity: 0 }}
             whileHover={{ opacity: 1 }}
-            className="absolute inset-0 bg-indigo-900/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4 transition-opacity duration-300 opacity-0 group-hover:opacity-100 p-6 z-20"
+            className="absolute inset-0 bg-gradient-to-br from-[#1F6F5F]/90 to-[#2FA084]/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 transition-opacity duration-300 opacity-0 group-hover:opacity-100 p-6 z-20"
           >
              <motion.button 
                whileHover={{ scale: 1.05 }}
                whileTap={{ scale: 0.95 }}
                onClick={() => setDetailModal({ isOpen: true, product })}
-               className="w-full max-w-[160px] bg-white text-indigo-600 py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-2xl hover:bg-indigo-50 transition-colors"
+               className="w-full max-w-[160px] bg-white text-[#1F6F5F] py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-2xl hover:bg-[#6FCF97] hover:text-white transition-colors"
              >
                <Eye size={18} />
                Lihat Detail
@@ -905,7 +947,7 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
              </motion.div>
           )}
 
-          <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-xl px-4 py-1.5 rounded-full text-[10px] font-black text-indigo-600 z-10 shadow-sm uppercase tracking-wider">
+          <div className="absolute top-4 right-4 bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl px-4 py-1.5 rounded-full text-[10px] font-black text-[#1F6F5F] dark:text-[#6FCF97] z-10 shadow-sm uppercase tracking-wider border border-[#2FA084]/30">
             {product.category}
           </div>
       </div>
@@ -918,15 +960,15 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
                  <span className="text-[10px] font-bold text-gray-400">({product.reviewCount})</span>
                ) : null}
             </div>
-            <h3 className="text-xl font-bold text-gray-900 group-hover:text-indigo-600 transition-colors line-clamp-1 cursor-pointer" onClick={() => setDetailModal({ isOpen: true, product })}>{product.name}</h3>
-            <p className="text-gray-500 text-sm line-clamp-3 leading-relaxed">{product.description}</p>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white group-hover:text-[#1F6F5F] dark:group-hover:text-[#6FCF97] transition-colors line-clamp-1 cursor-pointer" onClick={() => setDetailModal({ isOpen: true, product })}>{product.name}</h3>
+            <p className="text-gray-500 dark:text-gray-400 text-sm line-clamp-3 leading-relaxed">{product.description}</p>
          </div>
          
-         <div className="pt-6 flex items-center justify-between border-t border-gray-100/50 mt-auto">
+         <div className="pt-6 flex items-center justify-between border-t border-gray-100/50 dark:border-gray-700/50 mt-auto">
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{isDiscounted ? 'Harga Promo' : 'Harga Dasar'}</p>
               <div className="flex items-baseline gap-2">
-                <p className="text-2xl font-black text-indigo-600">
+                <p className="text-2xl font-black text-[#1F6F5F] dark:text-[#6FCF97]">
                   <span className="text-sm font-medium mr-1 tracking-tight">Rp</span>
                   {finalPrice.toLocaleString('id-ID')}
                 </p>
@@ -941,7 +983,7 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => onPurchase(product)}
-              className="bg-indigo-600 text-white px-7 py-3.5 rounded-2xl font-bold hover:shadow-lg hover:bg-indigo-700 transition-all text-sm shadow-indigo-100 border-b-4 border-indigo-800"
+              className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-7 py-3.5 rounded-2xl font-bold hover:shadow-lg hover:shadow-[#2FA084]/30 hover:from-[#2FA084] hover:to-[#6FCF97] transition-all text-sm"
             >Beli Sekarang</motion.button>
          </div>
       </div>
@@ -951,25 +993,37 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
 
 
 function ProductCatalog({ products, onPurchase, setDetailModal, user, onToggleWishlist, getDiscountedPrice }: { products: Product[], onPurchase: (p: Product) => void, setDetailModal: (m: any) => void, user: User | null, onToggleWishlist: (id: string) => void, getDiscountedPrice: (p: number) => number }) {
+  console.log('[ProductCatalog] Rendering with products:', products.length);
+  
   return (
     <div className="space-y-16">
       <div className="text-center max-w-3xl mx-auto space-y-6 px-4 md:px-0">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           whileInView={{ opacity: 1, scale: 1 }}
-          className="inline-block bg-indigo-50 text-indigo-600 px-4 py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest mb-2"
+          className="inline-block bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] px-4 py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest mb-2 border border-[#2FA084]/30"
         >
           Katalog Produk
         </motion.div>
-        <h2 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900 leading-[1.1]">Pilihan Produk Digital Terbaik</h2>
-        <p className="text-gray-500 text-base md:text-lg leading-relaxed">Pilih dari berbagai pilihan produk digital untuk meningkatkan produktivitas dan finansial Anda melalui ekosistem kami.</p>
+        <h2 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900 dark:text-white leading-[1.1]">Pilihan Produk Digital Terbaik</h2>
+        <p className="text-gray-500 dark:text-gray-400 text-base md:text-lg leading-relaxed">Pilih dari berbagai pilihan produk digital untuk meningkatkan produktivitas dan finansial Anda melalui ekosistem kami.</p>
       </div>
 
-      <div id="product-catalog" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
-        {products.map(product => (
-          <ProductCard key={product.id} product={product} onPurchase={onPurchase} setDetailModal={setDetailModal} user={user} onToggleWishlist={onToggleWishlist} getDiscountedPrice={getDiscountedPrice} />
-        ))}
-      </div>
+      {products.length === 0 ? (
+        <div className="text-center py-20">
+          <div className="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+            <ShoppingBag size={40} className="text-gray-400" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Belum Ada Produk</h3>
+          <p className="text-gray-500 dark:text-gray-400">Produk akan muncul di sini setelah admin menambahkannya.</p>
+        </div>
+      ) : (
+        <div id="product-catalog" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+          {products.map(product => (
+            <ProductCard key={product.id} product={product} onPurchase={onPurchase} setDetailModal={setDetailModal} user={user} onToggleWishlist={onToggleWishlist} getDiscountedPrice={getDiscountedPrice} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -983,12 +1037,12 @@ function WishlistView({ products, user, onPurchase, setDetailModal, onToggleWish
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           whileInView={{ opacity: 1, scale: 1 }}
-          className="inline-block bg-red-50 text-red-500 px-4 py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest mb-2"
+          className="inline-block bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400 px-4 py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest mb-2 border border-red-200 dark:border-red-800"
         >
           Wishlist Anda
         </motion.div>
-        <h2 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900 leading-[1.1]">Produk Impian Anda</h2>
-        <p className="text-gray-500 text-base md:text-lg leading-relaxed">Simpan produk yang Anda minati dan akses kembali kapan saja untuk mulai menghasilkan cuan.</p>
+        <h2 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900 dark:text-white leading-[1.1]">Produk Impian Anda</h2>
+        <p className="text-gray-500 dark:text-gray-400 text-base md:text-lg leading-relaxed">Simpan produk yang Anda minati dan akses kembali kapan saja untuk mulai menghasilkan cuan.</p>
       </div>
 
       {wishlistedProducts.length > 0 ? (
@@ -998,15 +1052,15 @@ function WishlistView({ products, user, onPurchase, setDetailModal, onToggleWish
           ))}
         </div>
       ) : (
-        <div className="bg-white p-20 rounded-[3rem] border-2 border-dashed border-gray-100 text-center space-y-6">
-           <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-8">
+        <div className="bg-white dark:bg-gray-800 p-20 rounded-[3rem] border-2 border-dashed border-gray-100 dark:border-gray-700 text-center space-y-6">
+           <div className="w-24 h-24 bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-8">
               <Heart size={48} />
            </div>
-           <h3 className="text-2xl font-bold text-gray-900">Wah, Wishlist Masih Kosong</h3>
-           <p className="text-gray-500 max-w-md mx-auto">Jelajahi katalog kami dan klik ikon hati pada produk yang Anda sukai untuk menyimpannya di sini.</p>
+           <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Wah, Wishlist Masih Kosong</h3>
+           <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">Jelajahi katalog kami dan klik ikon hati pada produk yang Anda sukai untuk menyimpannya di sini.</p>
            <button 
              onClick={() => onNavigate('products')}
-             className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold hover:shadow-xl transition-all"
+             className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-8 py-4 rounded-2xl font-bold hover:shadow-xl hover:shadow-[#2FA084]/30 hover:from-[#2FA084] hover:to-[#6FCF97] transition-all"
            >Jelajahi Katalog</button>
         </div>
       )}
@@ -1031,10 +1085,10 @@ function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t:
 
   return (
     <div className="max-w-md mx-auto py-8 md:py-12 px-4">
-      <div className="space-y-8 bg-white p-6 md:p-10 rounded-[2.5rem] border border-gray-100 shadow-sm">
+      <div className="space-y-8 bg-white dark:bg-gray-800 p-6 md:p-10 rounded-[2.5rem] border border-gray-100 dark:border-gray-700 shadow-sm">
       <div className="text-center space-y-2">
-         <h2 className="text-3xl font-extrabold">{type === 'login' ? 'Selamat Datang' : 'Buat Akun'}</h2>
-         <p className="text-gray-500 text-sm">
+         <h2 className="text-3xl font-extrabold text-gray-900 dark:text-white">{type === 'login' ? 'Selamat Datang' : 'Buat Akun'}</h2>
+         <p className="text-gray-500 dark:text-gray-400 text-sm">
            {type === 'login' ? 'Masuk untuk mengelola afiliasi Anda' : 'Bergabung sebagai afiliasi dan mulai hasilkan cuan'}
          </p>
       </div>
@@ -1044,7 +1098,7 @@ function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t:
       <div className="text-center">
          <button 
            onClick={() => setTab(type === 'login' ? 'register' : 'login')}
-           className="text-sm font-medium text-gray-400 hover:text-indigo-600"
+           className="text-sm font-medium text-gray-400 hover:text-[#2FA084] dark:hover:text-[#6FCF97]"
          >
            {type === 'login' ? 'Belum punya akun? Daftar' : 'Sudah punya akun? Masuk'}
          </button>
@@ -1064,14 +1118,14 @@ function VerificationRequired() {
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white max-w-md w-full p-10 rounded-[2.5rem] border border-gray-100 text-center space-y-6 shadow-sm"
+        className="bg-white dark:bg-gray-800 max-w-md w-full p-10 rounded-[2.5rem] border border-gray-100 dark:border-gray-700 text-center space-y-6 shadow-sm"
       >
-        <div className="w-20 h-20 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto text-amber-500">
+        <div className="w-20 h-20 bg-amber-50 dark:bg-amber-900/20 rounded-3xl flex items-center justify-center mx-auto text-amber-500 dark:text-amber-400">
           <AlertTriangle size={40} />
         </div>
         <div className="space-y-2">
-          <h2 className="text-2xl font-bold tracking-tight">Verifikasi Email Anda</h2>
-          <p className="text-gray-500 font-medium text-sm">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Verifikasi Email Anda</h2>
+          <p className="text-gray-500 dark:text-gray-400 font-medium text-sm">
             Tautan verifikasi telah dikirim ke email Anda. Silakan verifikasi untuk membuka akses penuh ke Dashboard, Pembelian, dan Program Afiliasi.
           </p>
         </div>
@@ -1087,7 +1141,7 @@ function VerificationRequired() {
               }
             }}
             disabled={checking}
-            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+            className="w-full py-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-2xl font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-lg hover:shadow-[#2FA084]/30 transition-all flex items-center justify-center gap-2"
           >
             {checking ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle size={20} />}
             {checking ? 'Mengecek...' : 'Saya Sudah Verifikasi'}
@@ -1106,8 +1160,8 @@ function VerificationRequired() {
             disabled={sent}
             className={`w-full py-4 rounded-2xl font-bold transition-all border flex items-center justify-center gap-2 ${
               sent 
-              ? 'bg-green-50 border-green-100 text-green-600' 
-              : 'bg-white border-gray-100 text-gray-500 hover:bg-gray-50'
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800 text-green-600 dark:text-green-400' 
+              : 'bg-white dark:bg-gray-700 border-gray-100 dark:border-gray-600 text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
             }`}
           >
             {sent ? <Check size={20} /> : <Mail size={20} />}
@@ -1115,7 +1169,7 @@ function VerificationRequired() {
           </button>
         </div>
 
-        <p className="text-[10px] text-gray-400 font-medium">
+        <p className="text-[10px] text-gray-400 dark:text-gray-500 font-medium">
           *Jika email tidak muncul, cek folder Spam atau Promosi.
         </p>
       </motion.div>
@@ -1175,11 +1229,11 @@ function UserProfile() {
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm"
+        className="bg-white dark:bg-gray-800 rounded-[2.5rem] border border-gray-100 dark:border-gray-700 overflow-hidden shadow-sm"
       >
-        <div className="bg-indigo-600 h-32 relative">
-          <div className="absolute -bottom-10 left-10 w-20 h-20 bg-white rounded-3xl p-1 shadow-lg">
-            <div className="w-full h-full bg-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 text-3xl font-bold">
+        <div className="bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] h-32 relative">
+          <div className="absolute -bottom-10 left-10 w-20 h-20 bg-white dark:bg-gray-800 rounded-3xl p-1 shadow-lg">
+            <div className="w-full h-full bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-2xl flex items-center justify-center text-[#1F6F5F] dark:text-[#6FCF97] text-3xl font-bold border border-[#2FA084]/30">
               {user.name.charAt(0).toUpperCase()}
             </div>
           </div>
@@ -1187,13 +1241,13 @@ function UserProfile() {
         <div className="pt-16 pb-10 px-10">
           <div className="flex justify-between items-start mb-8">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight">{user.name}</h1>
-              <p className="text-gray-500 font-medium uppercase tracking-widest text-xs mt-1">{user.role}</p>
+              <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">{user.name}</h1>
+              <p className="text-gray-500 dark:text-gray-400 font-medium uppercase tracking-widest text-xs mt-1">{user.role}</p>
             </div>
             {!isEditing && (
               <button 
                 onClick={() => setIsEditing(true)}
-                className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-indigo-600 transition-all"
+                className="px-6 py-2.5 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-xl text-sm font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-lg hover:shadow-[#2FA084]/30 transition-all"
               >
                 Edit Profil
               </button>
@@ -1265,7 +1319,7 @@ function UserProfile() {
                 <button 
                   type="submit"
                   disabled={isSaving}
-                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50"
+                  className="flex-1 py-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-2xl font-bold hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-lg hover:shadow-[#2FA084]/30 transition-all disabled:opacity-50"
                 >
                   {isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}
                 </button>
@@ -1276,7 +1330,7 @@ function UserProfile() {
                     setName(user.name);
                     setEmail(user.email);
                   }}
-                  className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold hover:bg-gray-200 transition-all"
+                  className="flex-1 py-4 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl font-bold hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
                 >
                   Batal
                 </button>
@@ -1285,14 +1339,14 @@ function UserProfile() {
           </form>
 
           {!isEditing && (
-            <div className="mt-12 pt-8 border-t border-gray-100 grid grid-cols-2 gap-8">
+            <div className="mt-12 pt-8 border-t border-gray-100 dark:border-gray-700 grid grid-cols-2 gap-8">
               <div>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">ID Pengguna</p>
-                <p className="font-mono text-xs text-gray-500">{user.id}</p>
+                <p className="font-mono text-xs text-gray-500 dark:text-gray-400">{user.id}</p>
               </div>
               <div>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Kode Referal</p>
-                <p className="font-mono text-xs text-indigo-600 font-bold">{user.referralCode || '-'}</p>
+                <p className="font-mono text-xs text-[#1F6F5F] dark:text-[#6FCF97] font-bold">{user.referralCode || '-'}</p>
               </div>
             </div>
           )}
@@ -1309,6 +1363,7 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const { tiers } = useStore();
 
   
   // Withdrawal States
@@ -1325,8 +1380,19 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
   const [activeTab, setActiveTab] = useState<'stats' | 'marketing' | 'leaderboard'>(defaultTab);
 
   const ctr = data.totalClicks > 0 ? ((sales.length / data.totalClicks) * 100).toFixed(2) : '0';
-  const tier = user.tier || 'bronze';
-  const tierColor = tier === 'diamond' ? 'text-blue-600' : tier === 'gold' ? 'text-amber-500' : 'text-gray-500';
+  
+  // Get user's current tier
+  const userTierName = user.tier || 'starter';
+  const currentTier = tiers.find(t => t.id === userTierName || t.name === userTierName);
+  
+  // Find next tier
+  const sortedTiers = [...tiers].sort((a, b) => a.order - b.order);
+  const currentTierIndex = sortedTiers.findIndex(t => t.id === userTierName || t.name === userTierName);
+  const nextTier = currentTierIndex >= 0 && currentTierIndex < sortedTiers.length - 1 
+    ? sortedTiers[currentTierIndex + 1] 
+    : null;
+  
+  const tierColor = currentTier?.color || '#9CA3AF';
 
 
   const handleWithdrawRequest = async (e: React.FormEvent) => {
@@ -1496,31 +1562,39 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
   });
 
   return (
-    <div className="space-y-12">
-       <div className="flex justify-between items-center">
-          <h2 className="text-3xl font-bold tracking-tight">Afiliasi Dashboard</h2>
-          <button onClick={onLogout} className="text-red-500 font-bold text-sm flex items-center gap-2"><LogOut size={18}/> Keluar</button>
+    <div className="space-y-8 md:space-y-12">
+       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-3xl md:text-4xl font-black tracking-tight bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">Dashboard Afiliasi</h2>
+            <p className="text-gray-500 text-sm mt-2 font-medium">Pantau performa dan kelola komisi Anda</p>
+          </div>
+          <button onClick={onLogout} className="flex items-center gap-2 px-6 py-3 text-red-500 font-bold text-sm border-2 border-red-100 rounded-2xl hover:bg-red-50 transition-all">
+            <LogOut size={18}/> Keluar
+          </button>
        </div>
 
-       <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
+       <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
            <div className="relative group">
-              <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(user.commissionEarned || 0)} icon={<BarChart3 />} trend="+15%" />
+              <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(user.commissionEarned || 0)} icon={<Wallet />} trend="+15%" />
               <button 
                 onClick={() => setIsWithdrawModalOpen(true)}
-                className="absolute right-4 bottom-4 bg-indigo-600 text-white p-2 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
+                className="absolute right-4 bottom-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#2FA084] hover:to-[#6FCF97] transition-all shadow-lg shadow-[#2FA084]/30 group-hover:scale-105"
               >
-                Cairkan Dana
+                Cairkan
               </button>
            </div>
-           <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString()} icon={<ShoppingBag />} trend="+5" />
+           <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString() + " Sales"} icon={<ShoppingBag />} trend="+5" />
            <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
-           <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.2rem] border border-gray-100 flex flex-col justify-center">
-              <div className="flex justify-between items-center mb-2">
-                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Conversion Rate (CTR)</p>
-                 <TrendingUp size={14} className="text-green-500" />
+           <div className="bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-[#1F6F5F] shadow-xl shadow-[#2FA084]/30 flex flex-col justify-center text-white relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
+              <div className="relative z-10">
+                <div className="flex justify-between items-center mb-3">
+                   <p className="text-xs font-black text-white/70 uppercase tracking-widest">Conversion Rate</p>
+                   <TrendingUp size={16} className="text-[#6FCF97]" />
+                </div>
+                <h3 className="text-4xl md:text-5xl font-black">{ctr}%</h3>
+                <p className="text-xs text-white/60 mt-2 font-bold">Klik → Penjualan</p>
               </div>
-              <h3 className="text-3xl font-black">{ctr}%</h3>
-              <p className="text-[10px] text-gray-400 mt-1 font-medium italic">Klik vs Penjualan</p>
            </div>
         </div>
 
@@ -1609,28 +1683,58 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
         </AnimatePresence>
 
         {/* Affiliate Tabs */}
-
-        <div className="flex gap-2 p-1 bg-gray-100 rounded-2xl w-fit">
-           <button onClick={() => setActiveTab('stats')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'stats' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Statistik</button>
-           <button onClick={() => setActiveTab('marketing')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'marketing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Marketing Kit</button>
-           <button onClick={() => setActiveTab('leaderboard')} className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500'}`}>Leaderboard</button>
+        <div className="flex gap-2 p-1.5 bg-gradient-to-r from-gray-50 to-gray-100 rounded-2xl w-fit border border-gray-200 shadow-sm">
+           <button onClick={() => setActiveTab('stats')} className={`px-6 py-3 rounded-xl text-sm font-black transition-all ${activeTab === 'stats' ? 'bg-white text-[#1F6F5F] shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
+             📊 Statistik
+           </button>
+           <button onClick={() => setActiveTab('marketing')} className={`px-6 py-3 rounded-xl text-sm font-black transition-all ${activeTab === 'marketing' ? 'bg-white text-[#1F6F5F] shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
+             🎯 Marketing Kit
+           </button>
+           <button onClick={() => setActiveTab('leaderboard')} className={`px-6 py-3 rounded-xl text-sm font-black transition-all ${activeTab === 'leaderboard' ? 'bg-white text-[#1F6F5F] shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
+             🏆 Leaderboard
+           </button>
         </div>
 
         {activeTab === 'stats' && (
           <>
-            <div className={`p-8 rounded-[2.5rem] border bg-gradient-to-br from-white to-gray-50 flex items-center justify-between ${tier === 'diamond' ? 'border-blue-100' : tier === 'gold' ? 'border-amber-100' : 'border-gray-100'}`}>
-              <div className="flex items-center gap-6">
-                 <div className={`w-16 h-16 rounded-[2rem] flex items-center justify-center font-black text-2xl uppercase ${tier === 'diamond' ? 'bg-blue-600 text-white' : tier === 'gold' ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                    {tier.charAt(0)}
-                 </div>
-                 <div>
-                    <h4 className="text-xl font-black">Level Akun: <span className={`uppercase ${tierColor}`}>{tier}</span></h4>
-                    <p className="text-sm text-gray-500">Komisi Aktif: <span className="font-bold text-indigo-600">{tier === 'diamond' ? '25%' : tier === 'gold' ? '15%' : '10%'}</span> per penjualan.</p>
-                 </div>
-              </div>
-              <div className="text-right hidden md:block">
-                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Target Berikutnya</p>
-                 <p className="text-sm font-bold">{tier === 'bronze' ? '10' : tier === 'gold' ? '50' : '--'} Penjualan untuk Upgrade</p>
+            <div 
+              className="p-8 md:p-10 rounded-[2.5rem] border shadow-xl transition-all text-white"
+              style={{
+                background: `linear-gradient(135deg, ${tierColor} 0%, ${tierColor}dd 100%)`,
+                borderColor: tierColor
+              }}
+            >
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="flex items-center gap-6">
+                   <div 
+                     className="w-16 h-16 md:w-20 md:h-20 rounded-[2rem] flex items-center justify-center font-black text-3xl md:text-4xl shadow-lg bg-white/20 text-white"
+                   >
+                      {currentTier?.icon || userTierName.charAt(0).toUpperCase()}
+                   </div>
+                   <div>
+                      <h4 className="text-xl md:text-2xl font-black">
+                        Level Akun: <span className="uppercase">{currentTier?.displayName || userTierName}</span>
+                      </h4>
+                      <p className="text-sm md:text-base font-bold mt-1 text-white/80">
+                        Komisi Aktif: <span className="font-black text-white">
+                          {currentTier ? `${(currentTier.commissionRate * 100).toFixed(0)}%` : '5%'}
+                        </span> per penjualan
+                      </p>
+                   </div>
+                </div>
+                <div className="text-center md:text-right">
+                   <p className="text-xs font-black uppercase tracking-widest mb-1 text-white/60">
+                     {nextTier ? 'Target Berikutnya' : 'Tier Tertinggi'}
+                   </p>
+                   <p className="text-base md:text-lg font-black text-white">
+                     {nextTier ? `${nextTier.minSales} Penjualan` : '∞'}
+                   </p>
+                   {nextTier && (
+                     <p className="text-xs text-white/60 mt-1">
+                       untuk {nextTier.displayName} ({(nextTier.commissionRate * 100).toFixed(0)}%)
+                     </p>
+                   )}
+                </div>
               </div>
             </div>
             {/* Charts... */}
@@ -1820,17 +1924,49 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
         </div>
         )}
 
-       <div id="referral-link" className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-10 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-indigo-100">
-           <div className="space-y-2">
-              <h3 className="text-2xl font-bold">Link Referal Aktif</h3>
-              <p className="text-indigo-100 opacity-80">Gunakan link ini untuk promosi. Cookies ditanam selama 30 hari.</p>
-           </div>
-           <div className="bg-white/10 backdrop-blur-md p-2 rounded-2xl flex gap-4">
-              <input readOnly value={data.referralLink} className="flex-1 bg-transparent px-4 font-mono text-sm border-none focus:ring-0" />
-              <button onClick={() => {
-                navigator.clipboard.writeText(data.referralLink);
-                alert('Link disalin!');
-              }} className="bg-white text-indigo-600 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-all">Salin</button>
+       <div id="referral-link" className="relative bg-gradient-to-br from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] p-8 md:p-12 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-[#2FA084]/30 overflow-hidden">
+           {/* Background Decorations */}
+           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32"></div>
+           <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full -ml-24 -mb-24"></div>
+           
+           <div className="relative z-10 space-y-6">
+             <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center">
+                    <Zap size={24} className="text-white" />
+                  </div>
+                  <h3 className="text-2xl md:text-3xl font-black">Link Referal Aktif</h3>
+                </div>
+                <p className="text-white/80 text-base md:text-lg font-medium">Gunakan link ini untuk promosi. Cookies ditanam selama 30 hari untuk tracking komisi Anda.</p>
+             </div>
+             <div className="bg-white/10 backdrop-blur-md p-2 rounded-2xl flex flex-col sm:flex-row gap-3 border border-white/20">
+                <input 
+                  readOnly 
+                  value={data.referralLink} 
+                  className="flex-1 bg-transparent px-4 py-3 font-mono text-sm md:text-base border-none focus:ring-0 text-white placeholder-white/50" 
+                />
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(data.referralLink);
+                    alert('Link disalin!');
+                  }} 
+                  className="bg-white text-[#1F6F5F] px-6 md:px-8 py-3 rounded-xl font-black hover:bg-[#6FCF97] transition-all shadow-lg flex items-center justify-center gap-2 group"
+                >
+                  <span>Salin Link</span>
+                  <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                </button>
+             </div>
+             <div className="flex flex-wrap gap-3">
+               <div className="px-4 py-2 bg-white/10 backdrop-blur-sm rounded-xl text-sm font-bold border border-white/20">
+                 ✨ Auto-tracking
+               </div>
+               <div className="px-4 py-2 bg-white/10 backdrop-blur-sm rounded-xl text-sm font-bold border border-white/20">
+                 🍪 30 Hari Cookie
+               </div>
+               <div className="px-4 py-2 bg-white/10 backdrop-blur-sm rounded-xl text-sm font-bold border border-white/20">
+                 💰 Komisi Otomatis
+               </div>
+             </div>
            </div>
        </div>
 
@@ -2044,66 +2180,66 @@ function PricingView() {
   return (
     <div className="py-12 md:py-20 space-y-16 md:space-y-24 px-4 md:px-0">
       <div className="text-center max-w-2xl mx-auto space-y-4">
-        <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Pilih Paket yang Sesuai</h2>
-        <p className="text-gray-500 text-base md:text-lg">Investasikan masa depan digital Anda dengan paket yang tepat.</p>
+        <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white">Pilih Paket yang Sesuai</h2>
+        <p className="text-gray-500 dark:text-gray-400 text-base md:text-lg">Investasikan masa depan digital Anda dengan paket yang tepat.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         {plans.map((plan, i) => (
-          <div key={i} className={`relative p-8 md:p-10 rounded-[2rem] md:rounded-[2.5rem] border ${plan.popular ? 'border-indigo-600 border-2 shadow-2xl shadow-indigo-100 md:scale-105 z-10' : 'border-gray-100 bg-white shadow-sm'} space-y-8 flex flex-col`}>
+          <div key={i} className={`relative p-8 md:p-10 rounded-[2rem] md:rounded-[2.5rem] border ${plan.popular ? 'border-[#2FA084] dark:border-[#6FCF97] border-2 shadow-2xl shadow-[#2FA084]/30 md:scale-105 z-10 bg-white dark:bg-gray-800' : 'border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm'} space-y-8 flex flex-col`}>
             {plan.popular && (
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-600 text-white px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">Paling Populer</div>
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">Paling Populer</div>
             )}
             <div className="space-y-4">
-              <h3 className="text-2xl font-bold">{plan.name}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{plan.name}</h3>
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl md:text-4xl font-extrabold">{plan.price}</span>
-                <span className="text-gray-400 text-xs md:text-sm font-medium">/bln</span>
+                <span className="text-3xl md:text-4xl font-extrabold text-gray-900 dark:text-white">{plan.price}</span>
+                <span className="text-gray-400 dark:text-gray-500 text-xs md:text-sm font-medium">/bln</span>
               </div>
-              <p className="text-gray-500 text-xs md:text-sm">{plan.desc}</p>
+              <p className="text-gray-500 dark:text-gray-400 text-xs md:text-sm">{plan.desc}</p>
             </div>
             <div className="space-y-4 flex-1">
               {plan.features.map((f, j) => (
-                <div key={j} className="flex gap-3 items-center text-xs md:text-sm font-medium text-gray-700">
-                  <div className="w-5 h-5 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 flex-shrink-0">
+                <div key={j} className="flex gap-3 items-center text-xs md:text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <div className="w-5 h-5 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-full flex items-center justify-center text-[#1F6F5F] dark:text-[#6FCF97] flex-shrink-0 border border-[#2FA084]/30">
                     <Check size={12} strokeWidth={3} />
                   </div>
                   {f}
                 </div>
               ))}
             </div>
-            <button className={`w-full py-4 rounded-xl md:rounded-2xl font-bold transition-all ${plan.popular ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-900 text-white hover:bg-black'}`}>
+            <button className={`w-full py-4 rounded-xl md:rounded-2xl font-bold transition-all ${plan.popular ? 'bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-lg hover:shadow-[#2FA084]/30' : 'bg-gray-900 dark:bg-gray-700 text-white hover:bg-gray-800 dark:hover:bg-gray-600'}`}>
               {plan.btn}
             </button>
           </div>
         ))}
       </div>
 
-      <div className="bg-white rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 overflow-hidden shadow-sm max-w-4xl mx-auto">
-        <div className="p-6 md:p-8 border-b border-gray-100 bg-gray-50/50">
-          <h3 className="text-xl md:text-2xl font-bold text-center">Perbandingan Detail</h3>
+      <div className="bg-white dark:bg-gray-800 rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 dark:border-gray-700 overflow-hidden shadow-sm max-w-4xl mx-auto">
+        <div className="p-6 md:p-8 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/50">
+          <h3 className="text-xl md:text-2xl font-bold text-center text-gray-900 dark:text-white">Perbandingan Detail</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[600px]">
             <thead>
-              <tr className="bg-indigo-50/30 text-indigo-600 text-[10px] md:text-xs font-bold uppercase tracking-widest">
+              <tr className="bg-gradient-to-r from-[#6FCF97]/10 to-[#2FA084]/10 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 text-[#1F6F5F] dark:text-[#6FCF97] text-[10px] md:text-xs font-bold uppercase tracking-widest">
                 <th className="px-6 md:px-8 py-5 md:py-6">Fitur Utama</th>
                 <th className="px-6 md:px-8 py-5 md:py-6 text-center">Starter</th>
                 <th className="px-6 md:px-8 py-5 md:py-6 text-center">Business</th>
                 <th className="px-6 md:px-8 py-5 md:py-6 text-center">Enterprise</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {comparison.map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-6 md:px-8 py-4 md:py-5 font-bold text-gray-900 text-xs md:text-sm">{row.feature}</td>
-                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium">
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/50 transition-colors">
+                  <td className="px-6 md:px-8 py-4 md:py-5 font-bold text-gray-900 dark:text-white text-xs md:text-sm">{row.feature}</td>
+                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium text-gray-700 dark:text-gray-300">
                     {typeof row.starter === 'string' ? row.starter : (row.starter ? <Check className="mx-auto text-green-500" size={16} /> : <X className="mx-auto text-red-300" size={16} />)}
                   </td>
-                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium">
+                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium text-gray-700 dark:text-gray-300">
                     {typeof row.business === 'string' ? row.business : (row.business ? <Check className="mx-auto text-green-500" size={16} /> : <X className="mx-auto text-red-300" size={16} />)}
                   </td>
-                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium">
+                  <td className="px-6 md:px-8 py-4 md:py-5 text-center text-xs md:text-sm font-medium text-gray-700 dark:text-gray-300">
                     {typeof row.enterprise === 'string' ? row.enterprise : (row.enterprise ? <Check className="mx-auto text-green-500" size={16} /> : <X className="mx-auto text-red-300" size={16} />)}
                   </td>
                 </tr>
@@ -2120,8 +2256,8 @@ function FeaturesView() {
   return (
      <div className="py-12 md:py-20 space-y-16 md:space-y-32">
         <div className="text-center max-w-3xl mx-auto space-y-4 md:space-y-6 px-4">
-           <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Semua yang Anda Butuhkan <br className="hidden md:block" /> dalam Satu Platform</h2>
-           <p className="text-base md:text-xl text-gray-500">Mulai dari manajemen produk hingga sistem pembelajaran mandiri (LMS) yang terintegrasi.</p>
+           <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white">Semua yang Anda Butuhkan <br className="hidden md:block" /> dalam Satu Platform</h2>
+           <p className="text-base md:text-xl text-gray-500 dark:text-gray-400">Mulai dari manajemen produk hingga sistem pembelajaran mandiri (LMS) yang terintegrasi.</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 md:gap-20 items-center px-4 md:px-0">
@@ -2142,7 +2278,7 @@ function FeaturesView() {
                 desc="Program referal yang transparan dengan perhitungan komisi otomatis." 
               />
            </div>
-           <div className="bg-gray-100 rounded-[2rem] md:rounded-[3rem] p-6 md:p-12">
+           <div className="bg-gray-100 dark:bg-gray-800 rounded-[2rem] md:rounded-[3rem] p-6 md:p-12 border border-gray-200 dark:border-gray-700">
               <img src="https://picsum.photos/seed/features/800/600" className="rounded-xl md:rounded-2xl shadow-lg w-full" referrerPolicy="no-referrer" />
            </div>
         </div>
@@ -2153,12 +2289,12 @@ function FeaturesView() {
 function FeatureItem({ icon, title, desc }: any) {
   return (
     <div className="flex gap-4 md:gap-6 items-start group">
-       <div className="w-12 h-12 md:w-16 md:h-16 flex-shrink-0 bg-white border border-gray-100 rounded-xl md:rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm group-hover:scale-110 transition-transform">
+       <div className="w-12 h-12 md:w-16 md:h-16 flex-shrink-0 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl md:rounded-2xl flex items-center justify-center text-[#1F6F5F] dark:text-[#6FCF97] shadow-sm group-hover:scale-110 transition-transform">
           {icon}
        </div>
        <div className="space-y-1">
-          <h4 className="text-lg md:text-xl font-bold">{title}</h4>
-          <p className="text-gray-500 text-sm md:text-base leading-relaxed">{desc}</p>
+          <h4 className="text-lg md:text-xl font-bold text-gray-900 dark:text-white">{title}</h4>
+          <p className="text-gray-500 dark:text-gray-400 text-sm md:text-base leading-relaxed">{desc}</p>
        </div>
     </div>
   );
@@ -2166,30 +2302,35 @@ function FeatureItem({ icon, title, desc }: any) {
 
 function FeatureCard({ icon, title, desc }: any) {
   return (
-    <div className="p-8 md:p-10 bg-white rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 space-y-4 md:space-y-6 hover:shadow-xl transition-all h-full">
-      <div className="w-12 h-12 md:w-16 md:h-16 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center">
+    <div className="p-8 md:p-10 bg-white dark:bg-gray-800 rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 dark:border-gray-700 space-y-4 md:space-y-6 hover:shadow-xl transition-all h-full group">
+      <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-br from-[#6FCF97]/20 to-[#2FA084]/20 dark:from-[#1F6F5F]/20 dark:to-[#2FA084]/20 rounded-xl md:rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform border border-[#2FA084]/30">
         {React.cloneElement(icon as any, { size: 24, className: 'md:w-8 md:h-8' })}
       </div>
-      <h4 className="text-xl md:text-2xl font-bold">{title}</h4>
-      <p className="text-gray-500 text-sm md:text-base leading-relaxed">{desc}</p>
+      <h4 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">{title}</h4>
+      <p className="text-gray-500 dark:text-gray-400 text-sm md:text-base leading-relaxed">{desc}</p>
     </div>
   );
 }
 
 function StatsCard({ title, value, icon, trend }: any) {
   return (
-    <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2rem] border border-gray-100 shadow-sm space-y-4">
-      <div className="flex justify-between items-start">
-        <div className="w-10 h-10 md:w-12 md:h-12 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center text-indigo-600">
-          {React.cloneElement(icon as any, { size: 20, className: 'md:w-[24px] md:h-[24px]' })}
+    <div className="relative bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-gray-100 shadow-lg hover:shadow-xl transition-all group overflow-hidden">
+      {/* Background Gradient Effect */}
+      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-full -mr-16 -mt-16 opacity-50 group-hover:opacity-100 transition-opacity"></div>
+      
+      <div className="relative z-10 space-y-4">
+        <div className="flex justify-between items-start">
+          <div className="w-12 h-12 md:w-14 md:h-14 bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-[#2FA084]/30 group-hover:scale-110 transition-transform">
+            {React.cloneElement(icon as any, { size: 24, className: 'md:w-[28px] md:h-[28px]' })}
+          </div>
+          <div className="px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 text-green-600 rounded-xl text-xs font-black border border-green-100">
+            {trend}
+          </div>
         </div>
-        <div className="px-2 py-1 bg-green-50 text-green-600 rounded-lg text-[10px] font-bold">
-          {trend}
+        <div>
+          <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-2">{title}</p>
+          <h3 className="text-3xl md:text-4xl font-black bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">{value}</h3>
         </div>
-      </div>
-      <div>
-        <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">{title}</p>
-        <h3 className="text-2xl md:text-3xl font-extrabold">{value}</h3>
       </div>
     </div>
   );
@@ -2248,39 +2389,39 @@ function ReviewSection({ productId, hasPurchased, fetchProducts }: { productId: 
         {hasPurchased && (
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-white text-gray-900 border border-gray-200 px-6 py-3 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all shadow-sm"
+            className="flex items-center gap-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-600 px-6 py-3 rounded-xl text-sm font-bold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm"
           >
-            <MessageSquare size={18} className="text-indigo-600" /> Tulis Ulasan
+            <MessageSquare size={18} className="text-[#1F6F5F] dark:text-[#6FCF97]" /> Tulis Ulasan
           </button>
         )}
       </div>
 
       {loading ? (
         <div className="flex justify-center py-10">
-          <Zap className="animate-spin text-indigo-600" size={32} />
+          <Zap className="animate-spin text-[#2FA084]" size={32} />
         </div>
       ) : reviews.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {reviews.map(review => (
-            <div key={review.id} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+            <div key={review.id} className="bg-white dark:bg-gray-800 p-8 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-4">
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-bold uppercase">
+                  <div className="w-10 h-10 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-full flex items-center justify-center text-[#1F6F5F] dark:text-[#6FCF97] font-bold uppercase border border-[#2FA084]/30">
                     {review.userName.charAt(0)}
                   </div>
                   <div>
-                    <p className="font-bold text-gray-900 text-sm">{review.userName}</p>
+                    <p className="font-bold text-gray-900 dark:text-white text-sm">{review.userName}</p>
                     <p className="text-[10px] text-gray-400 font-medium">{new Date(review.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
                   </div>
                 </div>
                 <StarRating rating={review.rating} size={14} />
               </div>
-              <p className="text-gray-600 text-sm leading-relaxed italic">"{review.comment}"</p>
+              <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed italic">"{review.comment}"</p>
             </div>
           ))}
         </div>
       ) : (
-        <div className="text-center py-12 bg-white/50 rounded-3xl border border-dashed border-gray-200">
+        <div className="text-center py-12 bg-white/50 dark:bg-gray-800/50 rounded-3xl border border-dashed border-gray-200 dark:border-gray-700">
           <p className="text-gray-400 font-medium">Belum ada ulasan untuk produk ini.</p>
         </div>
       )}
@@ -2300,11 +2441,11 @@ function ReviewSection({ productId, hasPurchased, fetchProducts }: { productId: 
                initial={{ opacity: 0, scale: 0.9 }}
                animate={{ opacity: 1, scale: 1 }}
                exit={{ opacity: 0, scale: 0.9 }}
-               className="relative w-full max-w-md bg-white rounded-[2.5rem] p-10 shadow-2xl space-y-8"
+               className="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-[2.5rem] p-10 shadow-2xl space-y-8"
              >
                 <div className="text-center space-y-2">
-                   <h3 className="text-2xl font-black">Berikan Rating</h3>
-                   <p className="text-sm text-gray-500">Bantu pembeli lain dengan ulasan jujur Anda.</p>
+                   <h3 className="text-2xl font-black text-gray-900 dark:text-white">Berikan Rating</h3>
+                   <p className="text-sm text-gray-500 dark:text-gray-400">Bantu pembeli lain dengan ulasan jujur Anda.</p>
                 </div>
                 
                 <ReviewForm 
@@ -2361,10 +2502,10 @@ function ReviewForm({ productId, onSuccess }: { productId: string, onSuccess: ()
     <form onSubmit={handleSubmit} className="space-y-6">
        <div className="flex flex-col items-center gap-4">
           <label className="text-xs font-black uppercase text-gray-400 tracking-widest">Rating Anda</label>
-          <div className="bg-gray-50 p-4 rounded-2xl">
+          <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-2xl">
              <StarRating rating={rating} size={32} interactive onSelect={setRating} />
           </div>
-          <span className="text-lg font-black text-indigo-600">{rating === 5 ? 'Luar Biasa!' : rating === 4 ? 'Bagus Sekali' : rating === 3 ? 'Cukup Baik' : rating === 2 ? 'Kurang Memuaskan' : 'Sangat Buruk'}</span>
+          <span className="text-lg font-black text-[#1F6F5F] dark:text-[#6FCF97]">{rating === 5 ? 'Luar Biasa!' : rating === 4 ? 'Bagus Sekali' : rating === 3 ? 'Cukup Baik' : rating === 2 ? 'Kurang Memuaskan' : 'Sangat Buruk'}</span>
        </div>
 
        <div className="space-y-1">
@@ -2373,7 +2514,7 @@ function ReviewForm({ productId, onSuccess }: { productId: string, onSuccess: ()
             required
             value={comment}
             onChange={e => setComment(e.target.value)}
-            className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 min-h-[120px] text-sm"
+            className="w-full px-5 py-4 bg-gray-50 dark:bg-gray-700 border border-gray-100 dark:border-gray-600 rounded-2xl outline-none focus:ring-2 focus:ring-[#2FA084] dark:focus:ring-[#6FCF97] min-h-[120px] text-sm text-gray-900 dark:text-white"
             placeholder="Tuliskan pengalaman Anda menggunakan produk ini..."
           />
        </div>
@@ -2381,7 +2522,7 @@ function ReviewForm({ productId, onSuccess }: { productId: string, onSuccess: ()
        <button 
          type="submit"
          disabled={loading}
-         className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 flex items-center justify-center gap-2"
+         className="w-full py-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white rounded-2xl font-black hover:from-[#2FA084] hover:to-[#6FCF97] hover:shadow-xl hover:shadow-[#2FA084]/30 transition-all flex items-center justify-center gap-2"
        >
          {loading ? <Zap className="animate-spin" size={20} /> : 'Kirim Ulasan Sekarang'}
        </button>
@@ -2405,3 +2546,213 @@ function WhatsAppSupport() {
     </div>
   );
 }
+
+function AboutView() {
+  return (
+    <div className="py-12 md:py-20 space-y-16 md:space-y-24 px-4 md:px-0">
+      {/* Hero Section */}
+      <div className="text-center max-w-4xl mx-auto space-y-6">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          className="inline-block bg-gradient-to-r from-[#6FCF97]/20 to-[#2FA084]/20 text-[#1F6F5F] px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest mb-2 border border-[#2FA084]/30"
+        >
+          Tentang Kami
+        </motion.div>
+        <h1 className="text-4xl md:text-6xl font-black tracking-tight bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent leading-[1.1]">
+          Platform Digital Terpercaya untuk Masa Depan Anda
+        </h1>
+        <p className="text-gray-600 text-lg md:text-xl leading-relaxed max-w-3xl mx-auto">
+          DigiSell adalah marketplace produk digital dan sistem afiliasi yang membantu ribuan orang menghasilkan pendapatan pasif melalui ekosistem digital yang terintegrasi.
+        </p>
+      </div>
+
+      {/* Mission & Vision */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12">
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true }}
+          className="bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] p-10 md:p-12 rounded-[2.5rem] text-white space-y-6 shadow-2xl shadow-[#2FA084]/30"
+        >
+          <div className="w-16 h-16 bg-white/20 backdrop-blur-xl rounded-2xl flex items-center justify-center">
+            <Zap size={32} className="text-white" />
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-2xl md:text-3xl font-black">Misi Kami</h3>
+            <p className="text-white/90 leading-relaxed">
+              Memberdayakan setiap individu untuk mencapai kebebasan finansial melalui produk digital berkualitas dan sistem afiliasi yang transparan dan menguntungkan.
+            </p>
+          </div>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, x: 20 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true }}
+          className="bg-white border-2 border-[#2FA084]/30 p-10 md:p-12 rounded-[2.5rem] space-y-6 shadow-lg hover:shadow-2xl transition-all"
+        >
+          <div className="w-16 h-16 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-2xl flex items-center justify-center border border-[#2FA084]/50">
+            <TrendingUp size={32} className="text-[#1F6F5F]" />
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-2xl md:text-3xl font-black bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">Visi Kami</h3>
+            <p className="text-gray-600 leading-relaxed">
+              Menjadi platform digital nomor satu di Indonesia yang menghubungkan kreator, afiliator, dan konsumen dalam ekosistem yang saling menguntungkan.
+            </p>
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Stats Section */}
+      <div className="bg-gradient-to-br from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] rounded-[3rem] p-12 md:p-16 text-white shadow-2xl shadow-[#2FA084]/30">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12">
+          <div className="text-center space-y-2">
+            <h4 className="text-4xl md:text-5xl font-black">5K+</h4>
+            <p className="text-white/80 text-sm font-medium">Pengguna Aktif</p>
+          </div>
+          <div className="text-center space-y-2">
+            <h4 className="text-4xl md:text-5xl font-black">200+</h4>
+            <p className="text-white/80 text-sm font-medium">Produk Digital</p>
+          </div>
+          <div className="text-center space-y-2">
+            <h4 className="text-4xl md:text-5xl font-black">15M+</h4>
+            <p className="text-white/80 text-sm font-medium">Total Transaksi</p>
+          </div>
+          <div className="text-center space-y-2">
+            <h4 className="text-4xl md:text-5xl font-black">98%</h4>
+            <p className="text-white/80 text-sm font-medium">Kepuasan Pelanggan</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Why Choose Us */}
+      <div className="space-y-12">
+        <div className="text-center max-w-3xl mx-auto space-y-4">
+          <h2 className="text-3xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">
+            Mengapa Memilih DigiSell?
+          </h2>
+          <p className="text-gray-500 text-lg">Platform terlengkap dengan fitur-fitur unggulan untuk kesuksesan Anda</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-white p-8 rounded-[2rem] border border-[#2FA084]/20 shadow-sm hover:shadow-xl transition-all space-y-4 group"
+          >
+            <div className="w-14 h-14 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-2xl flex items-center justify-center border border-[#2FA084]/50 group-hover:scale-110 transition-transform">
+              <ShieldCheck size={28} className="text-[#1F6F5F]" />
+            </div>
+            <h4 className="text-xl font-black text-gray-900">Keamanan Terjamin</h4>
+            <p className="text-gray-600 text-sm leading-relaxed">
+              Sistem enkripsi tingkat tinggi dan payment gateway terpercaya untuk melindungi setiap transaksi Anda.
+            </p>
+          </motion.div>
+
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.1 }}
+            className="bg-white p-8 rounded-[2rem] border border-[#2FA084]/20 shadow-sm hover:shadow-xl transition-all space-y-4 group"
+          >
+            <div className="w-14 h-14 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-2xl flex items-center justify-center border border-[#2FA084]/50 group-hover:scale-110 transition-transform">
+              <BarChart3 size={28} className="text-[#1F6F5F]" />
+            </div>
+            <h4 className="text-xl font-black text-gray-900">Dashboard Lengkap</h4>
+            <p className="text-gray-600 text-sm leading-relaxed">
+              Pantau performa afiliasi Anda dengan dashboard analytics yang real-time dan mudah dipahami.
+            </p>
+          </motion.div>
+
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.2 }}
+            className="bg-white p-8 rounded-[2rem] border border-[#2FA084]/20 shadow-sm hover:shadow-xl transition-all space-y-4 group"
+          >
+            <div className="w-14 h-14 bg-gradient-to-br from-[#6FCF97]/30 to-[#2FA084]/30 rounded-2xl flex items-center justify-center border border-[#2FA084]/50 group-hover:scale-110 transition-transform">
+              <Users size={28} className="text-[#1F6F5F]" />
+            </div>
+            <h4 className="text-xl font-black text-gray-900">Komunitas Solid</h4>
+            <p className="text-gray-600 text-sm leading-relaxed">
+              Bergabung dengan ribuan afiliator sukses dan dapatkan tips serta strategi marketing terbaik.
+            </p>
+          </motion.div>
+        </div>
+      </div>
+
+      {/* Team Section */}
+      <div className="space-y-12">
+        <div className="text-center max-w-3xl mx-auto space-y-4">
+          <h2 className="text-3xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] bg-clip-text text-transparent">
+            Tim Kami
+          </h2>
+          <p className="text-gray-500 text-lg">Didukung oleh profesional berpengalaman di bidang digital marketing dan teknologi</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {[
+            { name: 'Budi Santoso', role: 'CEO & Founder', image: 'https://picsum.photos/seed/ceo/400/400' },
+            { name: 'Siti Nurhaliza', role: 'Head of Marketing', image: 'https://picsum.photos/seed/cmo/400/400' },
+            { name: 'Ahmad Rizki', role: 'CTO', image: 'https://picsum.photos/seed/cto/400/400' }
+          ].map((member, i) => (
+            <motion.div 
+              key={i}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1 }}
+              className="bg-white rounded-[2rem] overflow-hidden border border-[#2FA084]/20 shadow-sm hover:shadow-xl transition-all group"
+            >
+              <div className="relative h-64 overflow-hidden">
+                <img 
+                  src={member.image} 
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                  referrerPolicy="no-referrer"
+                  alt={member.name}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#1F6F5F]/80 to-transparent"></div>
+              </div>
+              <div className="p-6 text-center space-y-1">
+                <h4 className="text-xl font-black text-gray-900">{member.name}</h4>
+                <p className="text-sm font-bold text-[#2FA084]">{member.role}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* CTA Section */}
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true }}
+        className="bg-gradient-to-br from-[#1F6F5F] via-[#2FA084] to-[#6FCF97] rounded-[3rem] p-12 md:p-16 text-center text-white space-y-8 shadow-2xl shadow-[#2FA084]/30"
+      >
+        <h2 className="text-3xl md:text-5xl font-black tracking-tight">Siap Memulai Perjalanan Anda?</h2>
+        <p className="text-white/90 text-lg max-w-2xl mx-auto">
+          Bergabunglah dengan ribuan afiliator sukses dan mulai hasilkan komisi dari produk digital berkualitas tinggi.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <button 
+            onClick={() => window.location.href = '/#register'}
+            className="px-10 py-5 bg-white text-[#1F6F5F] rounded-2xl font-black text-lg hover:bg-gray-50 transition-all shadow-xl"
+          >
+            Daftar Sekarang
+          </button>
+          <button 
+            onClick={() => window.location.href = '/#products'}
+            className="px-10 py-5 bg-white/10 backdrop-blur-xl border-2 border-white/30 text-white rounded-2xl font-black text-lg hover:bg-white/20 transition-all"
+          >
+            Lihat Produk
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
