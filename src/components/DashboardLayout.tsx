@@ -6,6 +6,7 @@ import {
   Users, Ticket, History, Globe, ChevronRight, Bell, Search, Moon, Sun, Info
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { GDPRCookieConsent } from './GDPRCookieConsent';
 
 interface SidebarItem {
   id: string;
@@ -59,12 +60,14 @@ export default function DashboardLayout({ children, activeTab, onNavigate, onLog
   const tierConfig = userTier ? {
     color: userTier.color,
     text: userTier.displayName,
-    textColor: `text-[${userTier.color}]`,
+    textColor: 'text-gray-600',
+    textColorCustom: userTier.color,
     commissionRate: `${(userTier.commissionRate * 100).toFixed(0)}%`
   } : {
     color: '#9CA3AF',
     text: 'Starter',
     textColor: 'text-gray-600',
+    textColorCustom: '#9CA3AF',
     commissionRate: '5%'
   };
 
@@ -314,6 +317,7 @@ export default function DashboardLayout({ children, activeTab, onNavigate, onLog
           >
             {children}
           </motion.div>
+          <GDPRCookieConsent />
         </main>
       </div>
     </div>
