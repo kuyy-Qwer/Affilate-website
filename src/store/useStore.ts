@@ -1,8 +1,6 @@
 import { create } from 'zustand';
 import { User, Product, GlobalConfig, Tier } from '../types';
-import { auth, db } from '../lib/firebase';
-import { onAuthStateChanged, sendEmailVerification } from 'firebase/auth';
-import { doc, getDoc, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 
 interface AppState {
   user: User | null;
@@ -12,6 +10,7 @@ interface AppState {
   globalConfig: GlobalConfig | null;
   isDarkMode: boolean;
   tiers: Tier[];
+  searchQuery: string;
   
   setUser: (user: User | null) => void;
   setIsAuthLoading: (loading: boolean) => void;
@@ -20,6 +19,7 @@ interface AppState {
   setGlobalConfig: (config: GlobalConfig) => void;
   toggleDarkMode: () => void;
   setTiers: (tiers: Tier[]) => void;
+  setSearchQuery: (q: string) => void;
   
   initAuth: () => void;
   fetchProducts: () => Promise<void>;
@@ -29,230 +29,248 @@ interface AppState {
   resendVerificationEmail: () => Promise<void>;
   checkVerificationStatus: () => Promise<void>;
   getAuthHeaders: () => Promise<Record<string, string>>;
+  subscribeToUserData: (userId: string) => (() => void) | null;
 }
 
 export const useStore = create<AppState>((set, get) => {
-  // Initialize dark mode on store creation
   const initialDarkMode = typeof window !== 'undefined' ? localStorage.getItem('darkMode') === 'true' : false;
   
-  console.log('[Store Init] Starting initialization');
-  console.log('[Store Init] localStorage darkMode:', typeof window !== 'undefined' ? localStorage.getItem('darkMode') : 'N/A');
-  console.log('[Store Init] initialDarkMode:', initialDarkMode);
-  
-  // Apply dark mode class immediately on initialization
   if (typeof window !== 'undefined') {
-    console.log('[Store Init] Window is defined, applying dark mode');
-    console.log('[Store Init] HTML classes before:', document.documentElement.className);
-    
     if (initialDarkMode) {
       document.documentElement.classList.add('dark');
-      console.log('[Store Init] Added dark class');
     } else {
       document.documentElement.classList.remove('dark');
-      console.log('[Store Init] Removed dark class (ensuring light mode)');
     }
-    
-    console.log('[Store Init] HTML classes after:', document.documentElement.className);
   }
 
   return {
-  user: null,
-  isAuthLoading: true,
-  products: [],
-  activeTab: 'home',
-  globalConfig: null,
-  isDarkMode: initialDarkMode,
-  tiers: [],
+    user: null,
+    isAuthLoading: true,
+    products: [],
+    activeTab: 'home',
+    globalConfig: null,
+    isDarkMode: initialDarkMode,
+    tiers: [],
+    searchQuery: '',
 
-  setUser: (user) => set({ user }),
-  setIsAuthLoading: (isAuthLoading) => set({ isAuthLoading }),
-  setProducts: (products) => set({ products }),
-  setActiveTab: (activeTab) => set({ activeTab }),
-  setGlobalConfig: (globalConfig) => set({ globalConfig }),
-  setTiers: (tiers) => set({ tiers }),
-  
-  toggleDarkMode: () => {
-    const currentMode = get().isDarkMode;
-    const newMode = !currentMode;
+    setUser: (user) => set({ user }),
+    setIsAuthLoading: (isAuthLoading) => set({ isAuthLoading }),
+    setProducts: (products) => set({ products }),
+    setActiveTab: (activeTab) => set({ activeTab }),
+    setGlobalConfig: (globalConfig) => set({ globalConfig }),
+    setTiers: (tiers) => set({ tiers }),
+    setSearchQuery: (q: string) => set({ searchQuery: q }),
     
-    console.log('[toggleDarkMode] Called');
-    console.log('[toggleDarkMode] Current mode:', currentMode);
-    console.log('[toggleDarkMode] New mode:', newMode);
-    console.log('[toggleDarkMode] HTML element:', document.documentElement);
-    console.log('[toggleDarkMode] Current HTML classes before:', document.documentElement.className);
-    
-    set({ isDarkMode: newMode });
-    localStorage.setItem('darkMode', String(newMode));
-    
-    if (newMode) {
-      document.documentElement.classList.add('dark');
-      console.log('[toggleDarkMode] Added dark class');
-    } else {
-      document.documentElement.classList.remove('dark');
-      console.log('[toggleDarkMode] Removed dark class');
-    }
-    
-    console.log('[toggleDarkMode] Current HTML classes after:', document.documentElement.className);
-    console.log('[toggleDarkMode] localStorage value:', localStorage.getItem('darkMode'));
-  },
-
-  getAuthHeaders: async () => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return {};
-    const token = await currentUser.getIdToken();
-    return {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
-  },
-
-  initAuth: () => {
-    onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        // Retry fetching Firestore doc a few times in case of transient offline errors
-        const fetchUserDoc = async (retries = 3): Promise<void> => {
-          try {
-            const docRef = doc(db, 'users', fbUser.uid);
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-              set({ 
-                user: { ...docSnap.data(), emailVerified: fbUser.emailVerified } as User, 
-                isAuthLoading: false 
-              });
-            } else {
-              // Firebase Auth user exists but no Firestore doc yet (e.g. doc write failed)
-              // Keep a minimal user object so the app doesn't treat them as logged out
-              set({ 
-                user: {
-                  id: fbUser.uid,
-                  name: fbUser.displayName || 'Pengguna',
-                  email: fbUser.email || '',
-                  role: 'affiliate',
-                  emailVerified: fbUser.emailVerified,
-                  wishlist: [],
-                  commissionEarned: 0,
-                  totalSales: 0,
-                  totalClicks: 0,
-                } as User, 
-                isAuthLoading: false 
-              });
-            }
-          } catch (error: any) {
-            const isTransient = 
-              error?.code === 'unavailable' ||
-              error?.code === 'deadline-exceeded' ||
-              error?.code === 'resource-exhausted' ||
-              error?.message?.includes('offline') ||
-              error?.message?.includes('network');
-            if (retries > 0 && isTransient) {
-              console.warn(`Firestore offline, retrying... (${retries} left)`);
-              await new Promise(res => setTimeout(res, 1500));
-              return fetchUserDoc(retries - 1);
-            }
-            console.error('Error fetching user profile:', error);
-            // Don't set user to null on network error — keep them "logged in" with basic info
-            set({ 
-              user: {
-                id: fbUser.uid,
-                name: fbUser.displayName || 'Pengguna',
-                email: fbUser.email || '',
-                role: 'affiliate',
-                emailVerified: fbUser.emailVerified,
-                wishlist: [],
-                commissionEarned: 0,
-                totalSales: 0,
-                totalClicks: 0,
-              } as User, 
-              isAuthLoading: false 
-            });
-          }
-        };
-        await fetchUserDoc();
+    toggleDarkMode: () => {
+      const currentMode = get().isDarkMode;
+      const newMode = !currentMode;
+      
+      set({ isDarkMode: newMode });
+      localStorage.setItem('darkMode', String(newMode));
+      
+      if (newMode) {
+        document.documentElement.classList.add('dark');
       } else {
-        set({ user: null, isAuthLoading: false });
+        document.documentElement.classList.remove('dark');
       }
-    });
-  },
+    },
 
-  fetchProducts: async () => {
-    console.log('[fetchProducts] Starting to fetch products...');
-    try {
-      const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      const products = snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
-      console.log('[fetchProducts] Fetched products:', products.length, products);
-      set({ products });
-    } catch (error) {
-      console.error('[fetchProducts] Error fetching products:', error);
-    }
-  },
+    getAuthHeaders: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return {};
+      return {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json'
+      };
+    },
 
-  fetchGlobalConfig: async () => {
-    try {
-      const docRef = doc(db, 'settings', 'global');
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        set({ globalConfig: docSnap.data() as GlobalConfig });
-      }
-    } catch (error) {
-      console.error('Error fetching global config:', error);
-    }
-  },
-
-  fetchTiers: async () => {
-    console.log('[fetchTiers] Starting to fetch tiers...');
-    try {
-      const q = query(
-        collection(db, 'tiers'), 
-        where('isActive', '==', true),
-        orderBy('order', 'asc')
-      );
-      const snap = await getDocs(q);
-      const tiers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Tier));
-      console.log('[fetchTiers] Fetched tiers:', tiers.length, tiers);
-      set({ tiers });
-    } catch (error) {
-      console.error('[fetchTiers] Error fetching tiers:', error);
-    }
-  },
-
-  updateUserProfile: async (data) => {
-    const { user, getAuthHeaders } = get();
-    if (!user) return;
-    try {
-      const resp = await fetch('/api/user/update-profile', {
-        method: 'POST',
-        headers: await getAuthHeaders(),
-        body: JSON.stringify(data)
+    initAuth: () => {
+      // Get initial session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          fetchUserProfile(session.user.id);
+        } else {
+          set({ isAuthLoading: false });
+        }
       });
-      if (resp.ok) {
-        set({ user: { ...user, ...data } });
+
+      // Listen for auth changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (session?.user) {
+            await fetchUserProfile(session.user.id);
+          } else {
+            set({ user: null, isAuthLoading: false });
+          }
+        }
+      );
+
+      // Return cleanup function
+      return () => {
+        subscription.unsubscribe();
+      };
+    },
+
+    fetchProducts: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const products = (data || []).map(d => ({ id: d.id, ...d } as Product));
+        set({ products });
+      } catch (error) {
+        console.error('[fetchProducts] Error fetching products:', error);
+      }
+    },
+
+    fetchGlobalConfig: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('settings')
+          .select('*')
+          .eq('id', 'global')
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          set({ globalConfig: data as GlobalConfig });
+        }
+      } catch (error) {
+        console.error('Error fetching global config:', error);
+      }
+    },
+
+    fetchTiers: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('tier_settings')
+          .select('*')
+          .eq('is_active', true)
+          .order('order', { ascending: true });
+
+        if (error) throw error;
+
+        const tiers = (data || []).map(d => ({ id: d.id, ...d } as Tier));
+        set({ tiers });
+      } catch (error) {
+        console.error('[fetchTiers] Error fetching tiers:', error);
+      }
+    },
+
+    updateUserProfile: async (data) => {
+      const { user, getAuthHeaders } = get();
+      if (!user) return;
+      try {
+        const resp = await fetch('/api/user/update-profile', {
+          method: 'POST',
+          headers: await getAuthHeaders(),
+          body: JSON.stringify(data)
+        });
+        if (resp.ok) {
+          set({ user: { ...user, ...data } });
+        } else {
+          const err = await resp.json();
+          throw new Error(err.error || 'Gagal update profil');
+        }
+      } catch (error) {
+        console.error('Error updating profile:', error);
+        throw error;
+      }
+    },
+
+    resendVerificationEmail: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        await supabase.auth.resend({
+          type: 'signup',
+          email: user.email
+        });
+      }
+    },
+
+    checkVerificationStatus: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.auth.refreshSession();
+        const { user: updatedUser } = await supabase.auth.getUser();
+        const { user: currentUser } = get();
+        if (currentUser && updatedUser) {
+          set({ user: { ...currentUser, emailVerified: updatedUser.email_confirmed_at != null } as User });
+        }
+      }
+    },
+
+    subscribeToUserData: (userId: string) => {
+      if (!userId) return null;
+      
+      const subscription = supabase
+        .channel(`user-${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'users',
+            filter: `uid=eq.${userId}`
+          },
+          (payload) => {
+            const currentUser = get().user;
+            if (currentUser && payload.new) {
+              set({ user: { ...payload.new, emailVerified: currentUser.emailVerified } as User });
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(subscription);
+      };
+    },
+  };
+
+  async function fetchUserProfile(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('uid', userId)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        const { data: { user } } = await supabase.auth.getUser();
+        set({ 
+          user: { ...data, emailVerified: user?.email_confirmed_at != null } as User, 
+          isAuthLoading: false 
+        });
       } else {
-        const err = await resp.json();
-        throw new Error(err.error || 'Gagal update profil');
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          set({ 
+            user: {
+              id: user.id,
+              name: user.user_metadata?.name || 'Pengguna',
+              email: user.email || '',
+              role: 'affiliate',
+              emailVerified: user.email_confirmed_at != null,
+              wishlist: [],
+              commissionEarned: 0,
+              totalSales: 0,
+              totalClicks: 0,
+            } as User, 
+            isAuthLoading: false 
+          });
+        }
       }
     } catch (error) {
-      console.error('Error updating profile:', error);
-      throw error;
-    }
-  },
-
-  resendVerificationEmail: async () => {
-    const fbUser = auth.currentUser;
-    if (fbUser) {
-      await sendEmailVerification(fbUser);
-    }
-  },
-
-  checkVerificationStatus: async () => {
-    const fbUser = auth.currentUser;
-    if (fbUser) {
-      await fbUser.reload();
-      const { user } = get();
-      if (user) {
-        set({ user: { ...user, emailVerified: auth.currentUser?.emailVerified || false } });
-      }
+      console.error('Error fetching user profile:', error);
+      set({ isAuthLoading: false });
     }
   }
-};
 });

@@ -229,9 +229,11 @@ export interface AffiliateConfig {
   fraudDetectionEnabled: boolean;
   maxClicksPerIpPerHour: number;
   minPayoutAmount: number;
-  // Multi-Touch Attribution
   multiTouchAttributionEnabled: boolean;
   attributionModel: 'first-click' | 'last-click' | 'linear' | 'time-decay';
+  multiTierEnabled: boolean;
+  tier2Rate: number;
+  tier3Rate: number;
 }
 
 export interface PayoutMethod {
@@ -239,7 +241,7 @@ export interface PayoutMethod {
   userId: string;
   type: 'bank_transfer' | 'dana' | 'ovo' | 'gopay' | 'paypal';
   accountName: string;
-  accountNumber: string; // Encrypted
+  accountNumber: string;
   bankName?: string;
   isVerified: boolean;
   isPrimary: boolean;
@@ -273,5 +275,107 @@ export interface DeepLink {
   fullUrl: string;
   clicks: number;
   conversions: number;
+  createdAt: string;
+}
+
+export interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  content: string;
+  excerpt: string;
+  coverImage: string;
+  authorId: string;
+  authorName: string;
+  status: 'draft' | 'published';
+  publishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  tags: string[];
+  seoTitle?: string;
+  seoDescription?: string;
+}
+
+export interface MediaFile {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  folder?: string;
+  thumbnailUrl?: string;
+}
+
+export interface StaticPage {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  isPublished: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailTemplate {
+  id: string;
+  key: string;
+  subject: string;
+  htmlBody: string;
+  variables: string[];
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface Announcement {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'promo';
+  isActive: boolean;
+  startDate: string;
+  endDate?: string;
+  targetAudience: 'all' | 'affiliates' | 'customers' | 'admins';
+  createdAt: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'commission_earned' | 'payout_processed' | 'tier_upgraded' | 'new_sale' | 'affiliate_approved';
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface Resource {
+  id: string;
+  title: string;
+  type: 'faq' | 'tip' | 'video' | 'guide';
+  content: string;
+  videoUrl?: string;
+  order: number;
+  isPublished: boolean;
+}
+
+export interface Refund {
+  id: string;
+  saleId: string;
+  amount: number;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected' | 'processed';
+  processedAt?: string;
+  commissionReversed: number;
+}
+
+export interface UserSession {
+  id: string;
+  userId: string;
+  deviceInfo: string;
+  ipAddress: string;
+  lastActive: string;
+  isActive: boolean;
   createdAt: string;
 }

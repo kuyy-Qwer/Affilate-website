@@ -55,19 +55,22 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
 
-import { auth, db } from './lib/firebase';
-import { signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, where } from 'firebase/firestore';
+import { supabase } from './lib/supabase';
 import { Product, AffiliateStats, User, Sale, Coupon, Review } from './types';
 import Navbar from './components/Navbar';
+import { StaticPageViewer } from './components/StaticPageViewer';
 import { LoginForm, RegisterForm } from './components/AuthForms';
+import { ResetPassword } from './components/ResetPassword';
+import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { TermsOfService } from './components/TermsOfService';
 import AdminDashboard from './components/AdminDashboard';
 import DashboardLayout from './components/DashboardLayout';
 import PurchasesView from './components/PurchasesView';
+import { PayoutHistory } from './components/PayoutHistory';
 import { useStore } from './store/useStore';
 
 export default function App() {
-  const { 
+  const {
     user, 
     setUser, 
     isAuthLoading, 
@@ -81,7 +84,8 @@ export default function App() {
     fetchGlobalConfig,
     isDarkMode,
     tiers,
-    fetchTiers
+    fetchTiers,
+    searchQuery
   } = useStore();
 
   const [runTour, setRunTour] = useState(false);
@@ -218,17 +222,14 @@ export default function App() {
   }, []);
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
+    setUser(null);
     setActiveTab('home');
   };
 
   const handlePurchase = async () => {
-    console.log('[handlePurchase] Starting purchase process');
-    console.log('[handlePurchase] User:', user);
-    console.log('[handlePurchase] Product:', purchaseModal.product);
     
     if (!user || !purchaseModal.product) {
-      console.log('[handlePurchase] Missing user or product, aborting');
       return;
     }
     
@@ -378,6 +379,14 @@ export default function App() {
   };
 
   const renderContent = () => {
+    // FRONTEND STATIC PAGE VIEWER: if URL has ?page=<slug>, render static page front-end
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const slug = params.get('page');
+      if (slug) {
+        return <StaticPageViewer slug={slug} />;
+      }
+    }
     if (user && !user.emailVerified && ['affiliate', 'admin'].includes(activeTab)) {
       return <VerificationRequired />;
     }
@@ -386,24 +395,30 @@ export default function App() {
       case 'home':
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
       case 'products':
-        return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} user={user} onToggleWishlist={updateWishlist} getDiscountedPrice={getDiscountedPrice} />;
+        return <ProductCatalog products={products} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} user={user} onToggleWishlist={updateWishlist} getDiscountedPrice={getDiscountedPrice} searchQuery={searchQuery} />;
       case 'pricing':
         return <PricingView />;
       case 'login':
         return <AuthWrapper type="login" setTab={setActiveTab} />;
       case 'register':
         return <AuthWrapper type="register" setTab={setActiveTab} />;
+      case 'reset-password':
+        return <ResetPassword onBack={() => setActiveTab('login')} />;
       case 'features':
         return <FeaturesView />;
       case 'about':
         return <AboutView />;
+      case 'privacy':
+        return <PrivacyPolicy onBack={() => setActiveTab('home')} />;
+      case 'terms':
+        return <TermsOfService onBack={() => setActiveTab('home')} />;
       default:
         return <LandingPage onStart={() => setActiveTab('products')} onViewPricing={() => setActiveTab('pricing')} />;
     }
   };
 
   // Dashboard tabs — rendered with sidebar layout
-  const dashboardTabs = ['affiliate', 'affiliate-stats', 'affiliate-marketing', 'affiliate-leaderboard', 'purchases', 'wishlist', 'profile', 'admin', 'admin-products', 'admin-users', 'admin-sales', 'admin-coupons', 'admin-withdrawals', 'admin-events', 'admin-logs'];
+  const dashboardTabs = ['about', 'affiliate', 'affiliate-stats', 'affiliate-marketing', 'affiliate-leaderboard', 'purchases', 'wishlist', 'payout-history', 'profile', 'admin', 'admin-products', 'admin-users', 'admin-sales', 'admin-coupons', 'admin-withdrawals', 'admin-events', 'admin-logs'];
   const isDashboardTab = dashboardTabs.includes(activeTab);
 
   const renderDashboardContent = () => {
@@ -467,6 +482,8 @@ export default function App() {
         return <PurchasesView />;
       case 'wishlist':
         return <WishlistView products={products} user={user!} onPurchase={(p) => setPurchaseModal({ isOpen: true, product: p })} setDetailModal={setDetailModal} onToggleWishlist={updateWishlist} onNavigate={setActiveTab} getDiscountedPrice={getDiscountedPrice} />;
+      case 'payout-history':
+        return <PayoutHistory />;
       case 'profile':
         return <UserProfile />;
       case 'about':
@@ -503,11 +520,15 @@ export default function App() {
     <HelmetProvider>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100 transition-colors duration-200">
         <Helmet>
-          <title>DigiSell | Marketplace Produk Digital & Afiliasi</title>
-          <meta name="description" content="Platform modern untuk jual beli produk digital dan program afiliasi dengan komisi tinggi." />
-          <meta property="og:title" content="DigiSell - Marketplace Digital" />
-          <meta property="og:description" content="Akses produk premium dan hasilkan komisi afiliasi." />
+          <title>DigiSell | Marketplace Produk Digital & Program Afiliasi</title>
+          <meta name="description" content="Platform modern untuk jual beli produk digital dan program afiliasi dengan komisi tinggi. Bergabung sekarang dan mulai hasilkan pendapatan." />
+          <meta name="keywords" content="produk digital, afiliasi, marketplace, komisi, jual beli online, ebook, software" />
+          <meta property="og:title" content="DigiSell - Marketplace Digital & Afiliasi" />
+          <meta property="og:description" content="Akses produk premium dan hasilkan komisi afiliasi hingga 50%." />
           <meta property="og:type" content="website" />
+          <meta property="og:locale" content="id_ID" />
+          <meta name="robots" content="index, follow" />
+          <link rel="canonical" href={typeof window !== 'undefined' ? window.location.href : 'https://digisell.id'} />
         </Helmet>
         
         {detailModal.isOpen && detailModal.product && (
@@ -1188,10 +1209,13 @@ function ProductCard({ product, onPurchase, setDetailModal, user, onToggleWishli
   );
 }
 
+function ProductCatalog({ products, onPurchase, setDetailModal, user, onToggleWishlist, getDiscountedPrice, searchQuery }: { products: Product[], onPurchase: (p: Product) => void, setDetailModal: (m: any) => void, user: User | null, onToggleWishlist: (id: string) => void, getDiscountedPrice: (p: number) => number, searchQuery: string }) {
+  const q = (searchQuery || '').toLowerCase();
+  const filtered = q
+    ? products.filter(p => (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q))
+    : products;
+  // Removed verbose logging for production
 
-function ProductCatalog({ products, onPurchase, setDetailModal, user, onToggleWishlist, getDiscountedPrice }: { products: Product[], onPurchase: (p: Product) => void, setDetailModal: (m: any) => void, user: User | null, onToggleWishlist: (id: string) => void, getDiscountedPrice: (p: number) => number }) {
-  console.log('[ProductCatalog] Rendering with products:', products.length);
-  
   return (
     <div className="space-y-16">
       <div className="text-center max-w-3xl mx-auto space-y-6 px-4 md:px-0">
@@ -1206,7 +1230,7 @@ function ProductCatalog({ products, onPurchase, setDetailModal, user, onToggleWi
         <p className="text-gray-500 dark:text-gray-400 text-base md:text-lg leading-relaxed">Pilih dari berbagai pilihan produk digital untuk meningkatkan produktivitas dan finansial Anda melalui ekosistem kami.</p>
       </div>
 
-      {products.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="text-center py-20">
           <div className="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
             <ShoppingBag size={40} className="text-gray-400" />
@@ -1216,7 +1240,7 @@ function ProductCatalog({ products, onPurchase, setDetailModal, user, onToggleWi
         </div>
       ) : (
         <div id="product-catalog" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
-          {products.map(product => (
+          {filtered.map(product => (
             <ProductCard key={product.id} product={product} onPurchase={onPurchase} setDetailModal={setDetailModal} user={user} onToggleWishlist={onToggleWishlist} getDiscountedPrice={getDiscountedPrice} />
           ))}
         </div>
@@ -1290,7 +1314,7 @@ function AuthWrapper({ type, setTab }: { type: 'login' | 'register', setTab: (t:
          </p>
       </div>
       {type === 'login' 
-        ? <LoginForm onSuccess={handleLoginSuccess} /> 
+        ? <LoginForm onSuccess={handleLoginSuccess} onForgotPassword={() => setTab('reset-password')} /> 
         : <RegisterForm onSuccess={() => setTab('home')} />}
       <div className="text-center">
          <button 
@@ -1770,18 +1794,21 @@ function AffiliateDashboard({ data, user, onLogout, setUser, defaultTab = 'stats
           </button>
        </div>
 
-       <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-           <div className="relative group">
-              <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(user.commissionEarned || 0)} icon={<Wallet />} trend="+15%" />
-              <button 
-                onClick={() => setIsWithdrawModalOpen(true)}
-                className="absolute right-4 bottom-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#2FA084] hover:to-[#6FCF97] transition-all shadow-lg shadow-[#2FA084]/30 group-hover:scale-105"
-              >
-                Cairkan
-              </button>
-           </div>
-           <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString() + " Sales"} icon={<ShoppingBag />} trend="+5" />
-           <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend="+124" />
+        <div id="affiliate-stats" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+            <div className="relative group">
+               {(() => {
+                 const commissionTrend = user.commissionEarned && user.commissionEarned > 0 ? `${((user.totalSales || 0) > 0 ? (user.commissionEarned / (user.totalSales || 1)).toFixed(0) : 0)}% ROI` : 'Belum ada';
+                 return <StatsCard title="Total Komisi" value={new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(user.commissionEarned || 0)} icon={<Wallet />} trend={commissionTrend} />;
+               })()}
+               <button 
+                 onClick={() => setIsWithdrawModalOpen(true)}
+                 className="absolute right-4 bottom-4 bg-gradient-to-r from-[#1F6F5F] to-[#2FA084] text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#2FA084] hover:to-[#6FCF97] transition-all shadow-lg shadow-[#2FA084]/30 group-hover:scale-105"
+               >
+                 Cairkan
+               </button>
+            </div>
+            <StatsCard title="Total Penjualan" value={(user.totalSales || 0).toString() + " Sales"} icon={<ShoppingBag />} trend={data.totalClicks > 0 ? `${(((user.totalSales || 0) / data.totalClicks) * 100).toFixed(1)}% conv` : '0% conv'} />
+            <StatsCard title="Link Clicks" value={data.totalClicks.toString()} icon={<Users />} trend={data.totalClicks > 0 ? `${(data.totalClicks / Math.max((user.totalSales || 1), 1)).toFixed(0)} CPC` : '0 CPC'} />
            <div className="bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-[#1F6F5F] shadow-xl shadow-[#2FA084]/30 flex flex-col justify-center text-white relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
               <div className="relative z-10">

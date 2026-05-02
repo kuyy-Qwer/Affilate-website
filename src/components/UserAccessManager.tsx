@@ -84,6 +84,7 @@ interface UserAccessManagerProps {
   users: User[];
   onRoleChange: (userId: string, newRole: string) => Promise<void>;
   onUpdateDetails: (e: React.FormEvent) => Promise<void>;
+  onDeleteUser: (userId: string) => Promise<void>;
   userEditingId: string | null;
   setUserEditingId: (id: string | null) => void;
   editUserName: string;
@@ -96,6 +97,7 @@ export default function UserAccessManager({
   users,
   onRoleChange,
   onUpdateDetails,
+  onDeleteUser,
   userEditingId,
   setUserEditingId,
   editUserName,
@@ -107,7 +109,9 @@ export default function UserAccessManager({
   const [filterRole, setFilterRole] = useState<Role | 'all'>('all');
   const [confirmModal, setConfirmModal] = useState<ConfirmModal>({ isOpen: false, user: null, newRole: null });
   const [editModal, setEditModal] = useState<EditModal>({ isOpen: false, user: null, name: '', email: '' });
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; user: User | null }>({ isOpen: false, user: null });
   const [isChangingRole, setIsChangingRole] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
   const filtered = useMemo(() => {
@@ -354,6 +358,12 @@ export default function UserAccessManager({
                           >
                             <Edit3 size={14} /> Edit Nama & Email
                           </button>
+                          <button
+                            onClick={() => setDeleteModal({ isOpen: true, user: u })}
+                            className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 text-red-600 rounded-xl text-xs font-bold hover:bg-red-50 hover:border-red-300 transition-all"
+                          >
+                            <UserX size={14} /> Hapus Pengguna
+                          </button>
                         </div>
                       </div>
                     </motion.div>
@@ -538,11 +548,92 @@ export default function UserAccessManager({
                     <Save size={16} /> Simpan
                   </button>
                 </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
+               </form>
+             </motion.div>
+           </div>
+         )}
+       </AnimatePresence>
+
+       {/* Delete User Confirmation Modal */}
+       <AnimatePresence>
+         {deleteModal.isOpen && deleteModal.user && (
+           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
+             <motion.div
+               initial={{ opacity: 0, scale: 0.9, y: 20 }}
+               animate={{ opacity: 1, scale: 1, y: 0 }}
+               exit={{ opacity: 0, scale: 0.9, y: 20 }}
+               className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl space-y-6"
+             >
+               <div className="flex items-start justify-between">
+                 <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center text-red-600">
+                   <UserX size={24} />
+                 </div>
+                 <button
+                   onClick={() => setDeleteModal({ isOpen: false, user: null })}
+                   className="p-2 text-gray-400 hover:text-gray-600 rounded-xl hover:bg-gray-100"
+                 >
+                   <X size={20} />
+                 </button>
+               </div>
+
+               <div className="space-y-1">
+                 <h3 className="text-xl font-black text-gray-900">Hapus Pengguna</h3>
+                 <p className="text-sm text-gray-500">Tindakan ini akan menghapus pengguna secara permanen dari sistem. Tidak dapat dibatalkan.</p>
+               </div>
+
+               {/* User Info */}
+               <div className="bg-red-50 rounded-2xl p-4 flex items-center gap-3 border border-red-100">
+                 <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center text-red-600 font-black">
+                   {deleteModal.user.name.charAt(0).toUpperCase()}
+                 </div>
+                 <div>
+                   <p className="font-bold text-gray-900 text-sm">{deleteModal.user.name}</p>
+                   <p className="text-xs text-gray-500">{deleteModal.user.email}</p>
+                 </div>
+               </div>
+
+               {/* Warning */}
+               <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex gap-3">
+                 <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                 <p className="text-xs text-amber-700 font-medium">
+                   <strong>Perhatian:</strong> Data pengguna, termasuk riwayat transaksi dan komisi, akan dihapus. Pastikan Anda yakin sebelum melanjutkan.
+                 </p>
+               </div>
+
+               {/* Actions */}
+               <div className="flex gap-3">
+                 <button
+                   onClick={() => setDeleteModal({ isOpen: false, user: null })}
+                   className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-2xl font-bold text-sm hover:bg-gray-200 transition-all"
+                 >
+                   Batal
+                 </button>
+                 <button
+                   onClick={async () => {
+                     if (!deleteModal.user) return;
+                     setIsDeleting(true);
+                     try {
+                       await onDeleteUser(deleteModal.user.id);
+                       setDeleteModal({ isOpen: false, user: null });
+                     } finally {
+                       setIsDeleting(false);
+                     }
+                   }}
+                   disabled={isDeleting}
+                   className="flex-1 py-3 bg-red-600 text-white rounded-2xl font-bold text-sm hover:bg-red-700 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                 >
+                   {isDeleting ? (
+                     <RefreshCw size={16} className="animate-spin" />
+                   ) : (
+                     <UserX size={16} />
+                   )}
+                   {isDeleting ? 'Menghapus...' : 'Ya, Hapus'}
+                 </button>
+               </div>
+             </motion.div>
+           </div>
+         )}
+       </AnimatePresence>
+     </div>
+   );
 }

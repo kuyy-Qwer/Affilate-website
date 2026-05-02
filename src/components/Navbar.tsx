@@ -13,7 +13,7 @@ interface NavbarProps {
 
 export default function Navbar({ user, onNavigate, activeTab, onLogout }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { isDarkMode, toggleDarkMode } = useStore();
+  const { isDarkMode, toggleDarkMode, searchQuery, setSearchQuery } = useStore();
 
   const handleNavigate = (tab: string) => {
     onNavigate(tab);
@@ -39,6 +39,8 @@ export default function Navbar({ user, onNavigate, activeTab, onLogout }: Navbar
                 <NavItem id="nav-products" active={activeTab === 'products'} onClick={() => handleNavigate('products')} label="Produk" />
                 <NavItem id="nav-features" active={activeTab === 'features'} onClick={() => handleNavigate('features')} label="Fitur" />
                 <NavItem id="nav-pricing" active={activeTab === 'pricing'} onClick={() => handleNavigate('pricing')} label="Paket" />
+                <NavItem id="nav-privacy" active={activeTab === 'privacy'} onClick={() => handleNavigate('privacy')} label="Kebijakan Privasi" />
+                <NavItem id="nav-terms" active={activeTab === 'terms'} onClick={() => handleNavigate('terms')} label="Syarat & Ketentuan" />
                 <NavItem active={activeTab === 'about'} onClick={() => handleNavigate('about')} label="Tentang" />
               </div>
           </div>
@@ -46,11 +48,7 @@ export default function Navbar({ user, onNavigate, activeTab, onLogout }: Navbar
           <div className="hidden md:flex items-center gap-4">
             {/* Dark Mode Toggle */}
             <button 
-              onClick={() => {
-                console.log('[Navbar] Dark mode toggle clicked');
-                console.log('[Navbar] Current isDarkMode:', isDarkMode);
-                toggleDarkMode();
-              }}
+              onClick={toggleDarkMode}
               className="p-2.5 text-gray-500 dark:text-gray-400 hover:text-[#1F6F5F] dark:hover:text-[#6FCF97] hover:bg-[#6FCF97]/20 dark:hover:bg-[#1F6F5F]/20 rounded-xl transition-all border border-gray-200 dark:border-gray-700"
               title={isDarkMode ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}
             >
@@ -121,6 +119,16 @@ export default function Navbar({ user, onNavigate, activeTab, onLogout }: Navbar
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Search (Phase 1.1) */}
+          <div className="hidden md:flex items-center justify-center mx-4" aria-label="Cari produk">
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari produk..."
+              className="w-64 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+            />
           </div>
 
           {/* Mobile Menu Toggle */}

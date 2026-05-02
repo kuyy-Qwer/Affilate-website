@@ -1,11 +1,37 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../lib/firebase';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, setDoc } from 'firebase/firestore';
 import { Product, User, Coupon, WithdrawalRequest, ProductVariant, GlobalConfig, Sale, SwipeFile } from '../types';
-import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search, History, FileUp } from 'lucide-react';
+import { Plus, Trash2, Edit3, Package, Users, Shield, UserCog, Ticket, Wallet, CheckCircle2, XCircle, Tag, Globe, Calendar, Zap, AlertCircle, ShoppingBag, Search, History, FileUp, BookOpen, Mail, BarChart3, Layers, AlertTriangle, TrendingUp, Share2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import Papa from 'papaparse';
 import UserAccessManager from './UserAccessManager';
+import { BlogManager } from './BlogManager';
+import { MediaManager } from './MediaManager';
+import { StaticPageManager } from './StaticPageManager';
+import { EmailTemplateManager } from './EmailTemplateManager';
+import { SiteSettingsDashboard } from './SiteSettingsDashboard';
+import { BannerManager } from './BannerManager';
+import { AffiliateApproval } from './AffiliateApproval';
+import { DeeplinkBuilder } from './DeeplinkBuilder';
+import { EpcMetrics } from './EpcMetrics';
+import { DateRangePicker } from './DateRangePicker';
+import { CommissionPdfReport } from './CommissionPdfReport';
+import { NotificationCenter } from './NotificationCenter';
+import { ResourceCenter } from './ResourceCenter';
+import { GDPRCookieConsent } from './GDPRCookieConsent';
+import { Admin2FA } from './Admin2FA';
+import { SessionManagement } from './SessionManagement';
+import { AuditLogsEnhanced } from './AuditLogsEnhanced';
+import { RevenueDashboard } from './RevenueDashboard';
+import { ConversionFunnel } from './ConversionFunnel';
+import { ProductPerformanceReport } from './ProductPerformanceReport';
+import { GeographicAnalytics } from './GeographicAnalytics';
+import { TrafficSourcesReport } from './TrafficSourcesReport';
+import { TierManagementUI } from './TierManagementUI';
+import { FraudAlertDashboard } from './FraudAlertDashboard';
+import { PayoutMethodManagementUI } from './PayoutMethodManagementUI';
+import { MultiTierReferral } from './MultiTierReferral';
+import { AffiliateTermsAgreement } from './AffiliateTermsAgreement';
+import { RefundManagement } from './RefundManagement';
 
 
 function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => void }) {
@@ -74,9 +100,9 @@ function AddVariantForm({ onAdd }: { onAdd: (name: string, price?: number, sku?:
   );
 }
 
-export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab?: 'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales' | 'logs' }) {
+export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab?: 'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales' | 'logs' | 'blog' | 'media' | 'static-pages' | 'affiliate-approvals' | 'deeplink-builder' | 'epc-metrics' | 'date-range-picker' | 'commission-pdf' | 'notifications' | 'resource-center' | 'revenue' | 'conversion-funnel' | 'product-performance' | 'geographic-analytics' | 'traffic-sources' | 'tier-management' | 'fraud-alerts' | 'payout-methods' | 'gdpr-consent' | '2fa-admin' | 'session-management' | 'audit-logs' }) {
   const { getAuthHeaders, globalConfig, fetchGlobalConfig } = useStore();
-  const [activeSubTab, setActiveSubTab] = useState<'products' | 'users' | 'coupons' | 'withdrawals' | 'events' | 'sales' | 'logs'>(defaultTab);
+  const [activeSubTab, setActiveSubTab] = useState<string>(defaultTab);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -90,6 +116,7 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
   const [userEditingId, setUserEditingId] = useState<string | null>(null);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [isBulkUploading, setIsBulkUploading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [editUserName, setEditUserName] = useState('');
   const [editUserEmail, setEditUserEmail] = useState('');
@@ -130,6 +157,10 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
     usageLimitPerUser: 1,
     expiryDate: ''
   });
+
+  const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
+  const [couponEditData, setCouponEditData] = useState<Partial<Coupon>>({});
+  const [showCouponEdit, setShowCouponEdit] = useState(false);
 
   useEffect(() => {
     if (globalConfig) {
@@ -352,6 +383,24 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
     }
   };
 
+  const handleEditCoupon = async () => {
+    if (!editingCoupon) return;
+    try {
+      await updateDoc(doc(db, 'coupons', editingCoupon.id), {
+        code: couponEditData.code || editingCoupon.code,
+        discountType: couponEditData.discountType || editingCoupon.discountType,
+        discountValue: couponEditData.discountValue ?? editingCoupon.discountValue,
+        usageLimitPerUser: couponEditData.usageLimitPerUser ?? editingCoupon.usageLimitPerUser,
+        expiryDate: couponEditData.expiryDate ?? editingCoupon.expiryDate,
+      });
+      setShowCouponEdit(false);
+      setEditingCoupon(null);
+      fetchCoupons();
+    } catch (err) {
+      alert('Gagal mengedit kupon');
+    }
+  };
+
   const handleProcessWithdrawal = async (withdrawal: WithdrawalRequest, status: 'approved' | 'rejected' | 'completed') => {
     if (!confirm(`Ubah status permintaan ini menjadi ${status}?`)) return;
     try {
@@ -417,6 +466,43 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
     }
   };
 
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm('Hapus pengguna ini secara permanen? Tindakan ini tidak dapat dibatalkan.')) return;
+    try {
+      const headers = await getAuthHeaders();
+      const resp = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers
+      });
+      if (resp.ok) {
+        alert('Pengguna berhasil dihapus');
+        fetchUsers();
+      } else {
+        const error = await resp.json();
+        alert('Gagal: ' + (error.error || 'Server error'));
+      }
+    } catch (err: any) {
+      alert('Gagal menghapus pengguna: ' + err.message);
+    }
+  };
+
+  const handleUpdateProduct = async (productId: string, updateData: any) => {
+    try {
+      const resp = await fetch(`/api/admin/products/${productId}`, {
+        method: 'PUT',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify(updateData)
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert('Gagal update: ' + (err.error || 'Server error'));
+      }
+      fetchProducts();
+    } catch (err) {
+      alert('Gagal mengupdate produk');
+    }
+  };
+
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -437,11 +523,11 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
         setNewProduct({ 
           name: '', 
           description: '', 
-          price: 0, 
+          price: 0,
           category: '', 
           image: 'https://picsum.photos/seed/tool/800/600', 
           downloadUrl: '', 
-          isSoftware: false, 
+          isSoftware: false,
           licensePrefix: '',
           marketingKit: {
             banners: [],
@@ -549,10 +635,232 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
           >
             <History size={16} className="md:w-[18px] md:h-[18px]" /> Audit Log
           </button>
+          <button 
+            onClick={() => setActiveSubTab('blog')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'blog' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`} 
+          >
+            <Search size={16} className="md:w-[18px] md:h-[18px]" /> Blog
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('email-templates')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'email-templates' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Mail size={16} className="md:w-[18px] md:h-[18px]" /> Email Templates
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('site-settings')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'site-settings' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Tool size={16} className="md:w-[18px] md:h-[18px]" /> Site Settings
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('announcements')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'announcements' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Calendar size={16} className="md:w-[18px] md:h-[18px]" /> Announcements
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('static-pages')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'static-pages' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <BookOpen size={16} className="md:w-[18px] md:h-[18px]" /> Static Pages
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('gdpr-consent')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'gdpr-consent' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Shield size={16} className="md:w-[18px] md:h-[18px]" /> GDPR Consent
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('2fa-admin')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === '2fa-admin' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <UserCog size={16} className="md:w-[18px] md:h-[18px]" /> 2FA Admin
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('session-management')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'session-management' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Calendar size={16} className="md:w-[18px] md:h-[18px]" /> Session Mgmt
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('audit-logs')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'audit-logs' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <AlertCircle size={16} className="md:w-[18px] md:h-[18px]" /> Audit Logs
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('affiliate-approvals')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'affiliate-approvals' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Users size={16} className="md:w-[18px] md:h-[18px]" /> Affiliate Approvals
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('deeplink-builder')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'deeplink-builder' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Globe size={16} className="md:w-[18px] md:h-[18px]" /> Deeplink Builder
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('epc-metrics')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'epc-metrics' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Calendar size={16} className="md:w-[18px] md:h-[18px]" /> EPC Metric
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('date-range-picker')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'date-range-picker' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Calendar size={16} className="md:w-[18px] md:h-[18px]" /> Date Range
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('commission-pdf')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'commission-pdf' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <FileUp size={16} className="md:w-[18px] md:h-[18px]" /> Commission PDF
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('notifications')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'notifications' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Bell size={16} className="md:w-[18px] md:h-[18px]" /> Notifications
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('resource-center')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'resource-center' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <BookOpen size={16} className="md:w-[18px] md:h-[18px]" /> Resources
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('revenue')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'revenue' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <BarChart3 size={16} className="md:w-[18px] md:h-[18px]" /> Revenue
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('conversion-funnel')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'conversion-funnel' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <TrendingUp size={16} className="md:w-[18px] md:h-[18px]" /> Funnel
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('product-performance')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'product-performance' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Package size={16} className="md:w-[18px] md:h-[18px]" /> Products
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('geographic-analytics')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'geographic-analytics' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Globe size={16} className="md:w-[18px] md:h-[18px]" /> Geographic
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('traffic-sources')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'traffic-sources' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Share2 size={16} className="md:w-[18px] md:h-[18px]" /> Traffic
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('tier-management')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'tier-management' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Layers size={16} className="md:w-[18px] md:h-[18px]" /> Tiers
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('fraud-alerts')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'fraud-alerts' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <AlertTriangle size={16} className="md:w-[18px] md:h-[18px]" /> Fraud
+          </button>
         </div>
       </div>
 
 
+      {activeSubTab === 'blog' && <BlogManager />}
+      {activeSubTab === 'media' && <MediaManager />}
+      {activeSubTab === 'static-pages' && <StaticPageManager />}
+      {activeSubTab === 'email-templates' && <EmailTemplateManager />}
+      {activeSubTab === 'site-settings' && <SiteSettingsDashboard />}
+      {activeSubTab === 'announcements' && <BannerManager />}
+      {activeSubTab === 'affiliate-approvals' && <AffiliateApproval />}
+      {activeSubTab === 'deeplink-builder' && <DeeplinkBuilder />}
+      {activeSubTab === 'epc-metrics' && <EpcMetrics value={12.34} />}
+      {activeSubTab === 'date-range-picker' && <DateRangePicker />}
+      {activeSubTab === 'commission-pdf' && <CommissionPdfReport />}
+      {activeSubTab === 'notifications' && <NotificationCenter />}
+      {activeSubTab === 'resource-center' && <ResourceCenter />}
+      {activeSubTab === 'gdpr-consent' && <GDPRCookieConsent />}
+      {activeSubTab === '2fa-admin' && <Admin2FA />}
+      {activeSubTab === 'session-management' && <SessionManagement />}
+      {activeSubTab === 'audit-logs' && <AuditLogsEnhanced />}
+      {activeSubTab === 'revenue' && <RevenueDashboard />}
+      {activeSubTab === 'conversion-funnel' && <ConversionFunnel />}
+      {activeSubTab === 'product-performance' && <ProductPerformanceReport />}
+      {activeSubTab === 'geographic-analytics' && <GeographicAnalytics />}
+      {activeSubTab === 'traffic-sources' && <TrafficSourcesReport />}
+      {activeSubTab === 'tier-management' && <TierManagementUI />}
+      {activeSubTab === 'fraud-alerts' && <FraudAlertDashboard />}
+      {activeSubTab === 'multi-tier-referral' && <MultiTierReferral />}
+      {activeSubTab === 'affiliate-terms' && <AffiliateTermsAgreement />}
+      {activeSubTab === 'refunds' && <RefundManagement />}
+      {activeSubTab === 'affiliate-approvals' && <AffiliateApproval />}
+      {activeSubTab === 'affiliate-approvals' && <AffiliateApprovalCmp />}
+      {activeSubTab === 'deeplink-builder' && <DeeplinkBuilder />}
+      {activeSubTab === 'epc-metrics' && <EpcMetrics value={12.34} />}
+      {activeSubTab === 'date-range-picker' && <DateRangePicker />}
+      {activeSubTab === 'commission-pdf' && <CommissionPdfReport />}
+      {activeSubTab === 'notifications' && <NotificationCenter />}
+      {activeSubTab === 'resource-center' && <ResourceCenter />}
+      {activeSubTab === 'multi-tier-referral' && <MultiTierReferral />}
+      {activeSubTab === 'affiliate-terms' && <AffiliateTermsAgreement />}
+      {activeSubTab === 'refunds' && <RefundManagement />}
       {activeSubTab === 'products' ? (
         <>
           <div className="bg-white dark:bg-gray-800 p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 dark:border-gray-700 shadow-lg transition-colors duration-200">
@@ -824,24 +1132,22 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                                     <h4 className="font-bold text-gray-700">Manajemen Modul LMS</h4>
                                   </div>
                                   <div className="space-y-4">
-                                    {(p.modules || []).map((m, idx) => (
-                                      <div key={idx} className="flex gap-4 items-start bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                          <div className="flex-1">
-                                            <p className="font-bold text-sm">{m.title}</p>
-                                            <p className="text-xs text-gray-400 line-clamp-1">{m.content}</p>
-                                          </div>
-                                          <button onClick={async () => {
-                                            const newModules = (p.modules || []).filter((_, i) => i !== idx);
-                                            await updateDoc(doc(db, 'products', p.id), { modules: newModules });
-                                            fetchProducts();
-                                          }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
-                                      </div>
-                                    ))}
-                                    <AddModuleForm onAdd={async (title, content) => {
-                                        const newModules = [...(p.modules || []), { id: Date.now().toString(), title, content }];
-                                        await updateDoc(doc(db, 'products', p.id), { modules: newModules });
-                                        fetchProducts();
-                                    }} />
+                                     {(p.modules || []).map((m, idx) => (
+                                       <div key={idx} className="flex gap-4 items-start bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                           <div className="flex-1">
+                                             <p className="font-bold text-sm">{m.title}</p>
+                                             <p className="text-xs text-gray-400 line-clamp-1">{m.content}</p>
+                                           </div>
+                                           <button onClick={async () => {
+                                             const newModules = (p.modules || []).filter((_, i) => i !== idx);
+                                             await handleUpdateProduct(p.id, { modules: newModules });
+                                           }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                                       </div>
+                                     ))}
+                                     <AddModuleForm onAdd={async (title, content) => {
+                                         const newModules = [...(p.modules || []), { id: Date.now().toString(), title, content }];
+                                         await handleUpdateProduct(p.id, { modules: newModules });
+                                     }} />
                                   </div>
                               </div>
 
@@ -851,52 +1157,49 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                                       <Zap size={18} className="text-gray-400" />
                                       <h4 className="font-bold text-gray-700">Digital Delivery</h4>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs font-bold text-gray-500">Software?</span>
-                                      <button 
-                                        onClick={async () => {
-                                          await updateDoc(doc(db, 'products', p.id), { isSoftware: !p.isSoftware });
-                                          fetchProducts();
-                                        }}
-                                        className={`w-10 h-5 rounded-full transition-colors relative ${p.isSoftware ? 'bg-indigo-600' : 'bg-gray-200'}`}
-                                      >
-                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${p.isSoftware ? 'left-6' : 'left-1'}`} />
-                                      </button>
-                                    </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-gray-500">Software?</span>
+                                        <button 
+                                          onClick={async () => {
+                                            await handleUpdateProduct(p.id, { isSoftware: !p.isSoftware });
+                                          }}
+                                          className={`w-10 h-5 rounded-full transition-colors relative ${p.isSoftware ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                                        >
+                                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${p.isSoftware ? 'left-6' : 'left-1'}`} />
+                                        </button>
+                                      </div>
                                   </div>
                                   <div className="space-y-4">
-                                      <div className="space-y-1">
-                                        <label className="text-[10px] font-black uppercase text-gray-400">Download URL</label>
-                                        <div className="flex gap-2">
-                                          <input 
-                                            defaultValue={p.downloadUrl || ''}
-                                            onBlur={async (e) => {
-                                              if (e.target.value !== (p.downloadUrl || '')) {
-                                                await updateDoc(doc(db, 'products', p.id), { downloadUrl: e.target.value });
-                                                fetchProducts();
-                                              }
-                                            }}
-                                            placeholder="https://example.com/file.zip"
-                                            className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
-                                          />
-                                        </div>
-                                      </div>
-                                      {p.isSoftware && (
                                         <div className="space-y-1">
-                                          <label className="text-[10px] font-black uppercase text-gray-400">License Prefix</label>
-                                          <input 
-                                            defaultValue={p.licensePrefix || ''}
-                                            onBlur={async (e) => {
-                                              if (e.target.value !== (p.licensePrefix || '')) {
-                                                await updateDoc(doc(db, 'products', p.id), { licensePrefix: e.target.value });
-                                                fetchProducts();
-                                              }
-                                            }}
-                                            placeholder="E.g. DIGI-PRO-"
-                                            className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
-                                          />
-                                        </div>
-                                      )}
+                                         <label className="text-[10px] font-black uppercase text-gray-400">Download URL</label>
+                                         <div className="flex gap-2">
+                                           <input 
+                                             defaultValue={p.downloadUrl || ''}
+                                             onBlur={async (e) => {
+                                               if (e.target.value !== (p.downloadUrl || '')) {
+                                                 await handleUpdateProduct(p.id, { downloadUrl: e.target.value });
+                                               }
+                                             }}
+                                             placeholder="https://example.com/file.zip"
+                                             className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
+                                           />
+                                         </div>
+                                       </div>
+                                        {p.isSoftware && (
+                                         <div className="space-y-1">
+                                           <label className="text-[10px] font-black uppercase text-gray-400">License Prefix</label>
+                                           <input 
+                                             defaultValue={p.licensePrefix || ''}
+                                             onBlur={async (e) => {
+                                               if (e.target.value !== (p.licensePrefix || '')) {
+                                                 await handleUpdateProduct(p.id, { licensePrefix: e.target.value });
+                                               }
+                                             }}
+                                             placeholder="E.g. DIGI-PRO-"
+                                             className="w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-indigo-500 outline-none"
+                                           />
+                                         </div>
+                                       )}
                                   </div>
                                   
                                   <div className="flex items-center gap-2 pt-4">
@@ -904,27 +1207,25 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                                     <h4 className="font-bold text-gray-700">Varian Produk</h4>
                                   </div>
                                   <div className="space-y-4">
-                                    {(p.variants || []).map((v, idx) => (
-                                      <div key={idx} className="flex gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                          <div className="flex-1">
-                                            <p className="font-bold text-sm">{v.name}</p>
-                                            <div className="flex gap-3 mt-1">
-                                              {v.sku && <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded text-gray-500 font-mono">SKU: {v.sku}</span>}
-                                              {v.price && <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded text-indigo-600 font-bold">Rp {v.price.toLocaleString('id-ID')}</span>}
-                                            </div>
-                                          </div>
-                                          <button onClick={async () => {
-                                            const newVariants = (p.variants || []).filter((_, i) => i !== idx);
-                                            await updateDoc(doc(db, 'products', p.id), { variants: newVariants });
-                                            fetchProducts();
-                                          }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
-                                      </div>
-                                    ))}
-                                    <AddVariantForm onAdd={async (name, price, sku) => {
-                                        const newVariants = [...(p.variants || []), { id: Date.now().toString(), name, price, sku }];
-                                        await updateDoc(doc(db, 'products', p.id), { variants: newVariants });
-                                        fetchProducts();
-                                    }} />
+                                     {(p.variants || []).map((v, idx) => (
+                                       <div key={idx} className="flex gap-4 items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                           <div className="flex-1">
+                                             <p className="font-bold text-sm">{v.name}</p>
+                                             <div className="flex gap-3 mt-1">
+                                               {v.sku && <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded text-gray-500 font-mono">SKU: {v.sku}</span>}
+                                               {v.price && <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded text-indigo-600 font-bold">Rp {v.price.toLocaleString('id-ID')}</span>}
+                                             </div>
+                                           </div>
+                                           <button onClick={async () => {
+                                             const newVariants = (p.variants || []).filter((_, i) => i !== idx);
+                                             await handleUpdateProduct(p.id, { variants: newVariants });
+                                           }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                                       </div>
+                                     ))}
+                                     <AddVariantForm onAdd={async (name, price, sku) => {
+                                         const newVariants = [...(p.variants || []), { id: Date.now().toString(), name, price, sku }];
+                                         await handleUpdateProduct(p.id, { variants: newVariants });
+                                     }} />
                                   </div>
                               </div>
                             </div>
@@ -944,6 +1245,7 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
           users={users}
           onRoleChange={handleUpdateRole}
           onUpdateDetails={handleUpdateUserDetails}
+          onDeleteUser={handleDeleteUser}
           userEditingId={userEditingId}
           setUserEditingId={setUserEditingId}
           editUserName={editUserName}
@@ -1040,35 +1342,114 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                       <th className="px-8 py-4">Aksi</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {coupons.map(c => (
-                      <tr key={c.id}>
-                        <td className="px-8 py-4">
-                           <span className="font-bold text-gray-900 block">{c.code}</span>
-                           <span className="text-[10px] text-gray-400 tracking-tighter uppercase">{c.usageCount} digunakan secara total</span>
-                        </td>
-                        <td className="px-8 py-4 text-sm text-gray-500 uppercase">{c.discountType === 'fixed' ? 'Nominal' : 'Persen'}</td>
-                        <td className="px-8 py-4 font-bold text-indigo-600">{c.discountType === 'percentage' ? `${c.discountValue}%` : `Rp ${c.discountValue.toLocaleString('id-ID')}`}</td>
-                        <td className="px-8 py-4 text-sm text-gray-700">{c.usageLimitPerUser || '∞'} kali</td>
-                        <td className="px-8 py-4 text-sm text-gray-700">{c.expiryDate ? new Date(c.expiryDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tidak ada'}</td>
-                        <td className="px-8 py-4 text-center">
-                           <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                             c.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                           }`}>{c.isActive ? 'Aktif' : 'Nonaktif'}</span>
-                        </td>
-                        <td className="px-8 py-4 text-right">
-                           <button onClick={() => handleDeleteCoupon(c.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
-                              <Trash2 size={18} />
-                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
+                   <tbody className="divide-y divide-gray-100">
+                     {coupons.map(c => (
+                       <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                         <td className="px-8 py-4">
+                            <span className="font-bold text-gray-900 block">{c.code}</span>
+                            <span className="text-[10px] text-gray-400 tracking-tighter uppercase">{c.usageCount} digunakan secara total</span>
+                         </td>
+                         <td className="px-8 py-4 text-sm text-gray-500 uppercase">{c.discountType === 'fixed' ? 'Nominal' : 'Persen'}</td>
+                         <td className="px-8 py-4 font-bold text-indigo-600">{c.discountType === 'percentage' ? `${c.discountValue}%` : `Rp ${c.discountValue.toLocaleString('id-ID')}`}</td>
+                         <td className="px-8 py-4 text-sm text-gray-700">{c.usageLimitPerUser || '∞'} kali</td>
+                         <td className="px-8 py-4 text-sm text-gray-700">{c.expiryDate ? new Date(c.expiryDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tidak ada'}</td>
+                         <td className="px-8 py-4 text-center">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await updateDoc(doc(db, 'coupons', c.id), { isActive: !c.isActive });
+                                  fetchCoupons();
+                                } catch (err) {
+                                  alert('Gagal mengubah status kupon');
+                                }
+                              }}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${c.isActive ? 'bg-green-600' : 'bg-gray-300'}`}
+                            >
+                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${c.isActive ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </button>
+                         </td>
+                         <td className="px-8 py-4 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <button onClick={() => {
+                                setEditingCoupon(c);
+                                setCouponEditData({ ...c });
+                                setShowCouponEdit(true);
+                              }} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg">
+                                <Edit3 size={18} />
+                              </button>
+                              <button onClick={() => handleDeleteCoupon(c.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
                </table>
-             </div>
-           </div>
-        </div>
-      ) : activeSubTab === 'events' ? (
+              </div>
+            </div>
+
+            {showCouponEdit && editingCoupon && (
+              <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl p-6 space-y-4">
+                  <h3 className="text-lg font-bold">Edit Kupon: {editingCoupon.code}</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-semibold mb-1 block">Kode</label>
+                      <input
+                        value={couponEditData.code || editingCoupon.code}
+                        onChange={e => setCouponEditData(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-1 block">Tipe</label>
+                      <select
+                        value={couponEditData.discountType || editingCoupon.discountType}
+                        onChange={e => setCouponEditData(prev => ({ ...prev, discountType: e.target.value as 'percentage' | 'fixed' }))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      >
+                        <option value="percentage">Persentase</option>
+                        <option value="fixed">Nominal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-1 block">Nilai</label>
+                      <input
+                        type="number"
+                        value={couponEditData.discountValue ?? editingCoupon.discountValue}
+                        onChange={e => setCouponEditData(prev => ({ ...prev, discountValue: parseInt(e.target.value) }))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold mb-1 block">Limit per User</label>
+                      <input
+                        type="number"
+                        value={couponEditData.usageLimitPerUser ?? editingCoupon.usageLimitPerUser}
+                        onChange={e => setCouponEditData(prev => ({ ...prev, usageLimitPerUser: parseInt(e.target.value) }))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-sm font-semibold mb-1 block">Tanggal Kedaluwarsa</label>
+                      <input
+                        type="date"
+                        value={couponEditData.expiryDate ? new Date(couponEditData.expiryDate).toISOString().split('T')[0] : ''}
+                        onChange={e => setCouponEditData(prev => ({ ...prev, expiryDate: e.target.value }))}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={() => { setShowCouponEdit(false); setEditingCoupon(null); }} className="flex-1 py-2.5 border rounded-lg font-bold hover:bg-gray-50 transition-all">Batal</button>
+                    <button onClick={handleEditCoupon} className="flex-1 py-2.5 bg-[#2FA084] text-white rounded-lg font-bold hover:bg-[#6FCF97] transition-all">Simpan</button>
+                  </div>
+                </div>
+              </div>
+            )}
+         </div>
+       ) : activeSubTab === 'events' ? (
         <div className="space-y-8">
            <div className="bg-white p-10 rounded-[2.5rem] border border-gray-100 space-y-8">
               <div className="flex items-center gap-3">
@@ -1333,10 +1714,15 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                 >
                   <AlertCircle size={14} /> Recover Abandoned Carts
                 </button>
-                <div className="bg-white border border-gray-200 px-4 py-2 rounded-xl flex items-center gap-2">
-                   <Search size={16} className="text-gray-400" />
-                   <input placeholder="Cari Buyer..." className="bg-transparent outline-none text-sm font-medium" />
-                </div>
+                 <div className="bg-white border border-gray-200 px-4 py-2 rounded-xl flex items-center gap-2">
+                    <Search size={16} className="text-gray-400" />
+                    <input 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Cari Buyer..." 
+                      className="bg-transparent outline-none text-sm font-medium w-40" 
+                    />
+                 </div>
              </div>
           </div>
 
@@ -1352,7 +1738,14 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {allSales.map((s) => (
+                {allSales
+                  .filter(s => 
+                    searchQuery === '' || 
+                    s.buyerEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    s.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    s.id.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((s) => (
                   <tr key={s.id} className="hover:bg-indigo-50/30 transition-colors">
                     <td className="px-8 py-6">
                       <p className="font-mono text-[10px] text-gray-400 mb-1">{s.id.slice(0, 12)}...</p>

@@ -4,10 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "emulate": "firebase emulators:start --import=./data --export-on-exit",
+    "dev": "tsx server-supabase.ts",
     "build": "vite build",
-    "start": "tsx server.ts",
+    "start": "NODE_ENV=production tsx server-supabase.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -15,13 +14,13 @@
   "dependencies": {
     "@google/genai": "^1.29.0",
     "@hookform/resolvers": "^5.2.2",
+    "@supabase/auth-helpers-react": "^0.15.0",
+    "@supabase/supabase-js": "^2.105.1",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "express-rate-limit": "^8.3.2",
-    "firebase": "^12.12.0",
-    "firebase-admin": "^13.8.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.546.0",

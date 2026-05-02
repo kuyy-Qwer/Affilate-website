@@ -112,5 +112,83 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow write: if false;
     }
+
+    // Email Templates — admin read/write via server only
+    match /emailTemplates/{templateId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Blog Posts — public read, server-only write
+    match /blogPosts/{postId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Media Files — authenticated read, server-only write
+    match /mediaFiles/{fileId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Static Pages — public read, server-only write
+    match /staticPages/{pageId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Notifications — owner read/write
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Resources — authenticated read, server-only write
+    match /resources/{resourceId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Clicks — server-only (analytics data)
+    match /clicks/{clickId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Refunds — admin read, server-only write
+    match /refunds/{refundId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Fraud Alerts — admin read, server-only write
+    match /fraud_alerts/{alertId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Deeplinks — authenticated read, server-only write
+    match /deeplinks/{linkId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Payout Methods — owner read/write
+    match /payoutMethods/{methodId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Terms — public read, server-only write
+    match /terms/{termId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Multi-tier Referrals — admin read, server-only write
+    match /multiTierReferrals/{referralId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
   }
 }

@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "projectName": "Affilate-website",
+  "userName": "developer",
+  "skillLevel": "intermediate",
+  "outputFolder": ".vibecheck/flow",
+  "planningArtifacts": ".vibecheck\\flow\\planning-artifacts",
+  "implementationArtifacts": ".vibecheck\\flow\\implementation-artifacts",
+  "installedAt": "2026-05-01T17:47:05.217Z",
+  "ide": [
+    "vscode"
+  ]
+}
