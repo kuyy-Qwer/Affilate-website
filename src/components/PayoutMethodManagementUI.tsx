@@ -20,7 +20,7 @@ const methodColors: Record<string, string> = {
 };
 
 export function PayoutMethodManagementUI() {
-  const { getAuthHeaders } from useStore();
+  const { getAuthHeaders } = useStore();
   const [methods, setMethods] = useState<PayoutMethod[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);

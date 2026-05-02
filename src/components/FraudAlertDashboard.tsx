@@ -19,7 +19,7 @@ const statusColors: Record<string, string> = {
 };
 
 export function FraudAlertDashboard() {
-  const { getAuthHeaders } from useStore();
+  const { getAuthHeaders } = useStore();
   const [alerts, setAlerts] = useState<FraudAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>('pending');

@@ -10,3 +10,5 @@ coverage/
 
 # Firebase service account — NEVER commit this
 serviceAccountKey.json
+.vercel
+.env*.local

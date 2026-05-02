@@ -53,9 +53,9 @@ export default defineConfig(({mode}) => {
           // Code splitting untuk bundle lebih kecil
           manualChunks: {
             vendor: ['react', 'react-dom'],
-            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
             charts: ['recharts'],
             motion: ['motion/react'],
+            supabase: ['@supabase/supabase-js'],
           }
         }
       }
