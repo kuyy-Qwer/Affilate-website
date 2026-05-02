@@ -16,7 +16,6 @@ export default function AdminSetup() {
     setMessage(null);
 
     try {
-      // First, find user by email in the users table
       const { data: userProfile, error: fetchError } = await supabase
         .from('users')
         .select('*')
@@ -28,7 +27,6 @@ export default function AdminSetup() {
         return;
       }
 
-      // Update user role to admin
       const { error: updateError } = await supabase
         .from('users')
         .update({ role: 'admin', updated_at: new Date().toISOString() })

@@ -821,6 +821,14 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
           >
             <AlertTriangle size={16} className="md:w-[18px] md:h-[18px]" /> Fraud
           </button>
+          <button 
+            onClick={() => setActiveSubTab('admin-setup')}
+            className={`flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-black text-xs md:text-sm transition-all ${
+              activeSubTab === 'admin-setup' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+            }`}
+          >
+            <Shield size={16} className="md:w-[18px] md:h-[18px]" /> Admin Setup
+          </button>
         </div>
       </div>
 
@@ -860,52 +868,11 @@ export default function AdminDashboard({ defaultTab = 'products' }: { defaultTab
       {activeSubTab === 'commission-pdf' && <CommissionPdfReport />}
       {activeSubTab === 'notifications' && <NotificationCenter />}
       {activeSubTab === 'resource-center' && <ResourceCenter />}
-      {activeSubTab === 'multi-tier-referral' && <MultiTierReferral />}
-      {activeSubTab === 'affiliate-terms' && <AffiliateTermsAgreement />}
-      {activeSubTab === 'refunds' && <RefundManagement />}
-      {activeSubTab === 'products' ? (
-        <>
-          <div className="bg-white dark:bg-gray-800 p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] border border-gray-100 dark:border-gray-700 shadow-lg transition-colors duration-200">
-            <div className="flex items-center justify-between mb-6 md:mb-8">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-[#1F6F5F] to-[#2FA084] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-[#2FA084]/30">
-                  <Plus size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl md:text-2xl font-black bg-gradient-to-r from-gray-900 dark:from-white to-gray-600 dark:to-gray-300 bg-clip-text text-transparent">Tambah Produk</h2>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5">Buat produk digital baru untuk dijual</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <label className={`flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#6FCF97]/30 to-[#2FA084]/30 border border-[#2FA084]/50 rounded-xl text-sm font-black cursor-pointer hover:from-[#6FCF97]/40 hover:to-[#2FA084]/40 transition-all ${isBulkUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <FileUp size={18} className="text-[#1F6F5F]" />
-                  {isBulkUploading ? 'Uploading...' : 'Bulk Upload CSV'}
-                  <input 
-                    type="file" 
-                    accept=".csv" 
-                    className="hidden" 
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setIsBulkUploading(true);
-                      Papa.parse(file, {
-                        header: true,
-                        dynamicTyping: true,
-                        complete: async (results) => {
-                          try {
-                            const resp = await fetch('/api/admin/bulk-products', {
-                              method: 'POST',
-                              headers: await getAuthHeaders(),
-                              body: JSON.stringify(results.data)
-                            });
-                            if (resp.ok) {
-                              alert('Bulk upload berhasil!');
-                              fetchProducts();
-                              fetchActivityLogs();
-                            } else {
-                              alert('Gagal bulk upload: ' + (await resp.json()).error);
-                            }
+      {activeSubTab === 'gdpr' && <GDPRCookieConsent />}
+      {activeSubTab === 'admin-setup' && <AdminSetup />}
+    </div>
+  );
+}
                           } catch (err) {
                             alert('Terjadi kesalahan saat upload');
                           } finally {
