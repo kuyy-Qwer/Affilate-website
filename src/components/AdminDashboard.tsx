@@ -32,6 +32,8 @@ import { PayoutMethodManagementUI } from './PayoutMethodManagementUI';
 import { MultiTierReferral } from './MultiTierReferral';
 import { AffiliateTermsAgreement } from './AffiliateTermsAgreement';
 import { RefundManagement } from './RefundManagement';
+import AdminSetup from './AdminSetup';
+
 
 
 function AddModuleForm({ onAdd }: { onAdd: (title: string, content: string) => void }) {

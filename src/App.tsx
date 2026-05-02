@@ -68,6 +68,7 @@ import DashboardLayout from './components/DashboardLayout';
 import PurchasesView from './components/PurchasesView';
 import { PayoutHistory } from './components/PayoutHistory';
 import { useStore } from './store/useStore';
+import AuthCallback from './components/AuthCallback';
 
 export default function App() {
   const {
@@ -218,6 +219,12 @@ export default function App() {
         }
       };
       trackClick();
+    }
+
+    // Handle auth callback from OAuth (Google Sign-In)
+    const tab = params.get('tab');
+    if (tab === 'auth-callback') {
+      setActiveTab('auth-callback');
     }
   }, []);
 
@@ -404,6 +411,8 @@ export default function App() {
         return <AuthWrapper type="register" setTab={setActiveTab} />;
       case 'reset-password':
         return <ResetPassword onBack={() => setActiveTab('login')} />;
+      case 'auth-callback':
+        return <AuthCallback />;
       case 'features':
         return <FeaturesView />;
       case 'about':

@@ -20,7 +20,7 @@ const handleGoogleSignIn = async (onSuccess: () => void, setError: (m: string) =
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`
+        redirectTo: `${window.location.origin}/?tab=auth-callback`
       }
     });
     
@@ -71,7 +71,7 @@ export function LoginForm({ onSuccess, onForgotPassword }: { onSuccess: () => vo
         <label className="text-sm font-semibold text-gray-700">Email</label>
         <div className="relative">
           <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input {...register('email')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all outline-none" placeholder="anda@email.com" />
+          <input {...register('email')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#2FA084] transition-all outline-none" placeholder="anda@email.com" />
         </div>
         {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
       </div>
@@ -79,16 +79,16 @@ export function LoginForm({ onSuccess, onForgotPassword }: { onSuccess: () => vo
         <label className="text-sm font-semibold text-gray-700">Password</label>
         <div className="relative">
           <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input {...register('password')} type="password" className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all outline-none" placeholder="••••••••" />
+          <input {...register('password')} type="password" className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#2FA084] transition-all outline-none" placeholder="••••••••" />
         </div>
         {errors.password && <p className="text-xs text-red-500 mt-1">{errors.password.message}</p>}
       </div>
       {error && <p className="text-sm text-red-500 bg-red-50 p-3 rounded-lg">{error}</p>}
-      <button disabled={loading} type="submit" className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
+      <button disabled={loading} type="submit" className="w-full py-3 bg-[#1F6F5F] text-white rounded-xl font-bold hover:bg-[#2FA084] transition-all flex items-center justify-center gap-2">
         {loading ? <Loader2 className="animate-spin" size={20} /> : 'Masuk'}
       </button>
       {onForgotPassword && (
-        <button type="button" onClick={onForgotPassword} className="w-full text-center text-sm text-indigo-600 hover:text-indigo-700 font-semibold transition-colors">
+        <button type="button" onClick={onForgotPassword} className="w-full text-center text-sm text-[#1F6F5F] hover:text-[#2FA084] font-semibold transition-colors">
           Lupa Password?
         </button>
       )}
@@ -184,7 +184,7 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         </div>
         <h3 className="text-xl font-bold text-gray-900">Pendaftaran Berhasil!</h3>
         <p className="text-gray-600">Cek email Anda untuk verifikasi akun.</p>
-        <button onClick={onSuccess} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all">
+        <button onClick={onSuccess} className="w-full py-3 bg-[#1F6F5F] text-white rounded-xl font-bold hover:bg-[#2FA084] transition-all">
           Lanjutkan ke Login
         </button>
       </div>
@@ -197,7 +197,7 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         <label className="text-sm font-semibold text-gray-700">Nama Lengkap</label>
         <div className="relative">
           <User className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input {...register('name')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all outline-none" placeholder="Nama Anda" />
+          <input {...register('name')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#2FA084] transition-all outline-none" placeholder="Nama Anda" />
         </div>
         {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name.message}</p>}
       </div>
@@ -205,7 +205,7 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         <label className="text-sm font-semibold text-gray-700">Email</label>
         <div className="relative">
           <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input {...register('email')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all outline-none" placeholder="anda@email.com" />
+          <input {...register('email')} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#2FA084] transition-all outline-none" placeholder="anda@email.com" />
         </div>
         {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
       </div>
@@ -213,12 +213,12 @@ export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
         <label className="text-sm font-semibold text-gray-700">Password</label>
         <div className="relative">
           <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input {...register('password')} type="password" className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all outline-none" placeholder="••••••••" />
+          <input {...register('password')} type="password" className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#2FA084] transition-all outline-none" placeholder="••••••••" />
         </div>
         {errors.password && <p className="text-xs text-red-500 mt-1">{errors.password.message}</p>}
       </div>
       {error && <p className="text-sm text-red-500 bg-red-50 p-3 rounded-lg">{error}</p>}
-      <button disabled={loading} type="submit" className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
+      <button disabled={loading} type="submit" className="w-full py-3 bg-[#1F6F5F] text-white rounded-xl font-bold hover:bg-[#2FA084] transition-all flex items-center justify-center gap-2">
         {loading ? <Loader2 className="animate-spin" size={20} /> : 'Daftar'}
       </button>
     </form>
